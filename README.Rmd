@@ -1,3 +1,18 @@
+```markdown
+---
+output: github_document
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.path = "man/figures/README-",
+  out.width = "100%"
+)
+
+```
+
 # sciwxzs: 基于 DeepSeek 的 SCI 文献智能分析与综述生成系统 🚀
 
 [](https://www.r-project.org/)
@@ -22,11 +37,11 @@
 
 你可以使用 `remotes` 包直接从 GitHub 安装开发版本的 `sciwxzs`：
 
-```r
+```{r, eval = FALSE}
 # 如果你尚未安装 remotes，请先运行：
 # install.packages("remotes")
 
-# 从 GitHub 安装 sciwxzs
+# 从 GitHub 安装 sciwxzs (请将下方替换为你的实际 GitHub 用户名)
 remotes::install_github("你的GitHub用户名/sciwxzs")
 
 ```
@@ -35,9 +50,9 @@ remotes::install_github("你的GitHub用户名/sciwxzs")
 
 ## 🚀 快速入门 (Quick Start)
 
-安装完成后，只需两行代码即可启动交互式分析分析系统：
+安装完成后，只需两行代码即可启动交互式分析系统：
 
-```r
+```{r, eval = FALSE}
 library(sciwxzs)
 
 # 启动本地文献分析与翻译系统
@@ -58,5 +73,5 @@ run_sciwxzs()
 💡 **交流与探讨**
 欢迎关注微信公众号 **“走天涯徐小洋地理数据科学”** 获取更多关于空间数据分析、R 语言开发及地理信息科学的前沿技术分享。
 
----
+```
 
