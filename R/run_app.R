@@ -30,16 +30,17 @@ run_sciwxzs <- function() {
   # ==========================================
   # 1. UI 定义
   # ==========================================
-  # UI定义
+# UI定义
 ui <- dashboardPage(
   skin = "blue",
-  dashboardHeader(title = "DeepSeek文献综合分析与翻译系统"),
+  dashboardHeader(title = "SCI文献分析与综述系统", titleWidth = 300),
   
   dashboardSidebar(
+    width = 300,
     sidebarMenu(
       menuItem("数据上传与筛选", tabName = "search", icon = icon("search")),
       menuItem("摘要翻译", tabName = "translate", icon = icon("language")),
-      menuItem("API配置", tabName = "api", icon = icon("key")),
+      menuItem("API配置", tabName = "api", icon = icon("key"), selected = TRUE),
       menuItem("分词处理", tabName = "segment", icon = icon("cut")),
       menuItem("词频分析", tabName = "wordfreq", icon = icon("chart-bar")),
       menuItem("时间趋势", tabName = "trends", icon = icon("line-chart")),
@@ -57,7 +58,7 @@ ui <- dashboardPage(
       numericInput("delay_seconds", "API延迟(秒):", 0.5, min = 0.1, max = 5, step = 0.1),
       numericInput("top_n_words", "显示词数:", 100, min = 10, max = 500),
       checkboxInput("test_mode", "测试模式(仅前10条)", FALSE),
-      actionButton("reset_all", "重置所有", class = "btn-warning", style = "width: 100%; margin-top: 10px;")
+      actionButton("reset_all", "重置所有", class = "btn-warning", style = "width: 80%; margin-top: 10px;")
     )
   ),
   
@@ -84,6 +85,20 @@ ui <- dashboardPage(
           color: #c9302c !important;
           background-color: rgba(217, 83, 79, 0.1) !important;
           border-radius: 2px !important;
+        }
+        .api-status-box {
+          background-color: #f8f9fa;
+          border-left: 4px solid #3c8dbc;
+          padding: 10px;
+          margin-bottom: 15px;
+        }
+        .api-status-valid {
+          color: #00a65a;
+          font-weight: bold;
+        }
+        .api-status-invalid {
+          color: #dd4b39;
+          font-weight: bold;
         }
       "))
     ),
@@ -152,6 +167,10 @@ ui <- dashboardPage(
               fluidRow(
                 box(
                   title = "翻译设置", status = "primary", solidHeader = TRUE, width = 4,
+                  # API状态提示
+                  uiOutput("api_status_indicator_translate"),
+                  hr(),
+                  
                   radioButtons(
                     inputId = "data_source",
                     label = "数据来源",
@@ -179,9 +198,6 @@ ui <- dashboardPage(
                       textOutput("search_data_info")
                     )
                   ),
-                  hr(),
-                  passwordInput("api_key", "DeepSeek API密钥", placeholder = "输入sk-开头的密钥"),
-                  tags$small("密钥仅本次会话有效，不会存储"),
                   hr(),
                   numericInput(
                     inputId = "max_tokens_trans",
@@ -211,7 +227,7 @@ ui <- dashboardPage(
                     tabPanel("翻译进度",
                              h4("翻译状态"),
                              verbatimTextOutput("trans_status"),
-                             uiOutput("progress_script_ui"),  # <--- 在这里添加这一行
+                             uiOutput("progress_script_ui"),
                              tags$hr(),
                              h4("进度展示"),
                              tags$div(
@@ -242,26 +258,35 @@ ui <- dashboardPage(
               fluidRow(
                 box(
                   title = "DeepSeek API配置", status = "warning", solidHeader = TRUE, width = 6,
-                  passwordInput("api_key_config", "API密钥:", value = ""),
-                  helpText("请输入您的DeepSeek API密钥。密钥仅在当前会话中保存。"),
+                  passwordInput("api_key_config", "API密钥:", value = "",
+                                placeholder = "输入sk-开头的DeepSeek API密钥"),
+                  helpText("请输入您的DeepSeek API密钥。密钥仅在当前会话中保存，所有模块将共用此密钥。"),
                   hr(),
                   selectInput("model", "选择模型:", 
-                              choices = c("deepseek-chat", "deepseek-coder"),
+                              choices = c("deepseek-chat", "deepseek-reasoner"),
                               selected = "deepseek-chat"),
                   numericInput("timeout", "请求超时(秒):", 30, min = 10, max = 120),
-                  actionButton("test_api", "测试连接", class = "btn-success"),
+                  actionButton("save_api_key", "保存API密钥", class = "btn-success", style = "width: 100%;"),
+                  actionButton("test_api", "测试连接", class = "btn-info", style = "width: 100%; margin-top: 10px;"),
                   hr(),
                   h4("API状态"),
-                  verbatimTextOutput("api_status")
+                  uiOutput("api_status_detailed")
                 ),
                 box(
                   title = "使用说明", status = "info", solidHeader = TRUE, width = 6,
                   HTML("
-        <h4>分词参数说明</h4>
+        <h4>API配置说明</h4>
         <ul>
-          <li><b>Max Tokens:</b> 控制API返回的最大token数</li>
-          <li><b>API延迟:</b> 每次请求之间的间隔，避免触发频率限制</li>
-          <li><b>测试模式:</b> 仅处理前10条记录，用于快速测试</li>
+          <li><b>API密钥获取：</b> 访问 <a href='https://platform.deepseek.com/' target='_blank'>DeepSeek官网</a> 注册获取</li>
+          <li><b>密钥格式：</b> 以 <code>sk-</code> 开头</li>
+          <li><b>安全性：</b> 密钥仅保存在当前会话内存中，不会存储到磁盘</li>
+          <li><b>模型选择：</b> deepseek-chat 适合翻译和分词，deepseek-reasoner 适合综述、技术分析</li>
+        </ul>
+        <h4>模块使用说明</h4>
+        <ul>
+          <li><b>摘要翻译：</b> 使用配置的API密钥进行批量翻译</li>
+          <li><b>分词处理：</b> 使用API进行中文分词</li>
+          <li><b>文献综述：</b> 基于API生成学术综述</li>
         </ul>
         <h4>数据要求</h4>
         <ul>
@@ -279,6 +304,10 @@ ui <- dashboardPage(
               fluidRow(
                 box(
                   title = "分词控制", status = "primary", solidHeader = TRUE, width = 4,
+                  # API状态提示
+                  uiOutput("api_status_indicator_segment"),
+                  hr(),
+                  
                   actionButton("start_segment", "开始分词", class = "btn-lg btn-success", 
                                style = "width: 100%; margin-bottom: 10px;"),
                   actionButton("stop_segment", "停止", class = "btn-danger", 
@@ -308,7 +337,7 @@ ui <- dashboardPage(
               )
       ),
       
-      # ==================== 5. 词频分析页面 ====================
+      # ==================== 5. 词频分析页面（优化PDF导出）====================
       tabItem(tabName = "wordfreq",
               fluidRow(
                 box(
@@ -344,7 +373,7 @@ ui <- dashboardPage(
               )
       ),
       
-      # ==================== 6. 时间趋势页面 ====================
+      # ==================== 6. 时间趋势页面（优化PDF导出）====================
       tabItem(tabName = "trends",
               fluidRow(
                 box(
@@ -381,7 +410,7 @@ ui <- dashboardPage(
               )
       ),
       
-      # ==================== 7. 热力图页面 ====================
+      # ==================== 7. 热力图页面（优化PDF导出）====================
       tabItem(tabName = "heatmap",
               fluidRow(
                 box(
@@ -409,7 +438,7 @@ ui <- dashboardPage(
               )
       ),
       
-      # ==================== 8. 气泡图页面 ====================
+      # ==================== 8. 气泡图页面（优化PDF导出）====================
       tabItem(tabName = "bubble",
               fluidRow(
                 box(
@@ -444,7 +473,7 @@ ui <- dashboardPage(
               )
       ),
       
-      # ==================== 9. 词云图页面 ====================
+      # ==================== 9. 词云图页面（优化PDF导出）====================
       tabItem(tabName = "wordcloud",
               fluidRow(
                 box(
@@ -474,12 +503,15 @@ ui <- dashboardPage(
                 box(
                   title = "综述设置", status = "primary", solidHeader = TRUE, width = 4,
                   
+                  # API状态提示
+                  uiOutput("api_status_indicator_review"),
+                  hr(),
+                  
                   # 数据来源选择
                   radioButtons(
                     inputId = "review_data_source",
                     label = "数据来源",
                     choices = list(
-                      "当前分析数据" = "current",
                       "筛选结果" = "filtered",
                       "上传新文件" = "upload"
                     ),
@@ -500,9 +532,7 @@ ui <- dashboardPage(
                     inputId = "review_type",
                     label = "综述类型",
                     choices = list(
-                      "国内外研究现状" = "domestic_international",
-                      "仅国内研究现状" = "domestic_only",
-                      "仅国外研究现状" = "international_only"
+                      "国内外研究现状" = "domestic_international"
                     ),
                     selected = "domestic_international"
                   ),
@@ -548,10 +578,6 @@ ui <- dashboardPage(
                     placeholder = "例如：重点关注方法创新、理论贡献、研究热点等...",
                     rows = 3
                   ),
-                  
-                  # API密钥（复用之前的）
-                  passwordInput("api_key_review", "DeepSeek API密钥", 
-                                placeholder = "输入sk-开头的密钥"),
                   
                   hr(),
                   
@@ -611,13 +637,15 @@ ui <- dashboardPage(
   )
 )
 
-  # ==========================================
-  # 2. Server 定义
-  # ==========================================
-  server <- function(input, output, session) {
+# Server逻辑
+server <- function(input, output, session) {
   
   # 反应式值存储
   rv <- reactiveValues(
+    # API配置
+    api_key = NULL,                     # 全局API密钥
+    api_valid = FALSE,                   # API是否有效
+    
     # 检索模块数据
     raw_data_search = NULL,
     filtered_search_data = NULL,
@@ -641,7 +669,6 @@ ui <- dashboardPage(
     api_test_result = NULL,
     wordcloud_obj = NULL,
     
-    
     # 文献综述相关
     review_data = NULL,
     review_result = NULL,
@@ -649,7 +676,6 @@ ui <- dashboardPage(
     is_review_generating = FALSE,
     is_review_canceled = FALSE,
     review_progress_log = "" 
-    
   )
   
   # 修复点1：重写通知函数，仅使用合法的type参数
@@ -658,6 +684,181 @@ ui <- dashboardPage(
     type <- ifelse(type %in% valid_types, type, "message")
     showNotification(message, type = type, duration = 3)
   }
+  
+  # ========== API配置模块：保存和验证API密钥 ==========
+  
+  # 保存API密钥
+  observeEvent(input$save_api_key, {
+    api_key <- trimws(input$api_key_config)
+    
+    if (api_key == "") {
+      show_notification("请输入API密钥！", "warning")
+      rv$api_valid <- FALSE
+      return()
+    }
+    
+    if (!grepl("^sk-", api_key)) {
+      show_notification("API密钥格式错误：应以'sk-'开头！", "error")
+      rv$api_valid <- FALSE
+      return()
+    }
+    
+    rv$api_key <- api_key
+    rv$api_valid <- TRUE
+    show_notification("API密钥已保存！", "message")
+  })
+  
+  # 测试API连接
+  observeEvent(input$test_api, {
+    if (is.null(rv$api_key)) {
+      show_notification("请先保存API密钥！", "warning")
+      return()
+    }
+    
+    rv$api_test_result <- "正在测试连接..."
+    
+    # 简单的测试调用
+    test_result <- tryCatch({
+      api_url <- "https://api.deepseek.com/chat/completions"
+      
+      request_body <- list(
+        model = "deepseek-chat",
+        messages = list(
+          list(role = "user", content = "Hello")
+        ),
+        max_tokens = 5
+      )
+      
+      headers <- add_headers(
+        "Authorization" = paste("Bearer", rv$api_key),
+        "Content-Type" = "application/json"
+      )
+      
+      response <- POST(
+        url = api_url,
+        headers,
+        body = toJSON(request_body, auto_unbox = TRUE),
+        timeout(10)
+      )
+      
+      if (status_code(response) == 200) {
+        "连接成功！API密钥有效。"
+      } else {
+        paste("连接失败：HTTP", status_code(response))
+      }
+    }, error = function(e) {
+      paste("连接错误：", e$message)
+    })
+    
+    rv$api_test_result <- test_result
+    rv$api_valid <- grepl("成功", test_result)
+    
+    if (rv$api_valid) {
+      show_notification("API连接测试成功！", "success")
+    } else {
+      show_notification("API连接测试失败，请检查密钥和网络", "error")
+    }
+  })
+  
+  # 显示API状态（详细版）
+  output$api_status_detailed <- renderUI({
+    if (is.null(rv$api_key)) {
+      div(class = "api-status-box",
+          h5("API状态：", span("未配置", class = "api-status-invalid")),
+          p("请在上方输入并保存您的DeepSeek API密钥")
+      )
+    } else if (!rv$api_valid) {
+      div(class = "api-status-box",
+          h5("API状态：", span("无效", class = "api-status-invalid")),
+          p("密钥格式可能不正确或已失效，请重新配置")
+      )
+    } else {
+      div(class = "api-status-box",
+          h5("API状态：", span("已配置并有效 ✓", class = "api-status-valid")),
+          p("模型：", input$model),
+          p("超时：", input$timeout, "秒"),
+          p("最后测试：", if (!is.null(rv$api_test_result) && !grepl("测试", rv$api_test_result)) {
+            format(Sys.time(), "%H:%M:%S")
+          } else {
+            "未测试"
+          }),
+          p("测试结果：", rv$api_test_result %||% "未测试")
+      )
+    }
+  })
+  
+  # API状态指示器 - 翻译模块
+  output$api_status_indicator_translate <- renderUI({
+    if (is.null(rv$api_key)) {
+      div(class = "alert alert-warning",
+          icon("exclamation-triangle"), 
+          "请先在", 
+          actionLink("go_to_api", "API配置页面", onclick = "Shiny.setInputValue('tab_selected', 'api', {priority: 'event'})"),
+          "配置API密钥"
+      )
+    } else if (!rv$api_valid) {
+      div(class = "alert alert-danger",
+          icon("times-circle"), 
+          "API密钥无效，请检查并重新配置"
+      )
+    } else {
+      div(class = "alert alert-success",
+          icon("check-circle"), 
+          "API已就绪"
+      )
+    }
+  })
+  
+  # API状态指示器 - 分词模块
+  output$api_status_indicator_segment <- renderUI({
+    if (is.null(rv$api_key)) {
+      div(class = "alert alert-warning",
+          icon("exclamation-triangle"), 
+          "请先在API配置页面设置密钥"
+      )
+    } else if (!rv$api_valid) {
+      div(class = "alert alert-danger",
+          icon("times-circle"), 
+          "API密钥无效"
+      )
+    } else {
+      div(class = "alert alert-success",
+          icon("check-circle"), 
+          "API已就绪"
+      )
+    }
+  })
+  
+  # API状态指示器 - 综述模块
+  output$api_status_indicator_review <- renderUI({
+    if (is.null(rv$api_key)) {
+      div(class = "alert alert-warning",
+          icon("exclamation-triangle"), 
+          "请先在API配置页面设置密钥"
+      )
+    } else if (!rv$api_valid) {
+      div(class = "alert alert-danger",
+          icon("times-circle"), 
+          "API密钥无效"
+      )
+    } else {
+      div(class = "alert alert-success",
+          icon("check-circle"), 
+          "API已就绪"
+      )
+    }
+  })
+  
+  # 标签页切换处理
+  observeEvent(input$go_to_api, {
+    updateTabItems(session, "sidebarMenu", "api")
+  })
+  
+  observeEvent(input$tab_selected, {
+    if (input$tab_selected == "api") {
+      updateTabItems(session, "sidebarMenu", "api")
+    }
+  })
   
   # ========== 新增：添加JavaScript代码输出 ==========
   output$progress_script_ui <- renderUI({
@@ -679,24 +880,6 @@ ui <- dashboardPage(
     session$onFlushed(function() {
       session$sendCustomMessage("initProgressBar", list())
     }, once = TRUE)
-  })
-  
-  # ==================== API配置模块====================
-  
-  observeEvent(input$test_api, {
-    rv$api_test_result <- "正在测试连接..."
-    Sys.sleep(1)
-    rv$api_test_result <- paste0(
-      "状态: 就绪\n",
-      "模型: ", input$model, "\n",
-      "超时: ", input$timeout, "秒\n",
-      "最后测试: ", format(Sys.time(), "%H:%M:%S")
-    )
-    show_notification("API连接测试完成", "message")
-  })
-  
-  output$api_status <- renderText({
-    rv$api_test_result %||% "未测试"
   })
   
   # ==================== 数据上传与检索模块 ====================
@@ -975,44 +1158,65 @@ ui <- dashboardPage(
     }
   })
   
-  # 读取翻译文件
+  # 读取翻译文件 - 修复版本
   observeEvent(input$file_translate, {
     if (input$data_source == "upload") {
+      req(input$file_translate)
       tryCatch({
-        rv$raw_data_trans <- read_excel(input$file_translate$datapath, sheet = 1)
-        if (!"AB" %in% colnames(rv$raw_data_trans)) {
-          show_notification("上传的文件中未找到'AB'列！", "error")
-          rv$raw_data_trans <- NULL
-        } else {
-          rv$raw_data_trans$AB <- as.character(rv$raw_data_trans$AB)
-          
-          # 同时更新processed_data用于分词
-          if (!is.null(rv$processed_data)) {
-            # 如果已有处理数据，更新ABCN列
-            rv$processed_data <- rv$raw_data_trans %>%
-              mutate(
-                doc_id = row_number(),
-                PY = as.numeric(PY) %||% NA_real_,
-                ABCN = as.character(ABCN) %||% ""
-              ) %>%
-              filter(!is.na(PY), PY >= 1900, PY <= year(Sys.Date()))
-          } else {
-            # 如果没有处理数据，创建新的
-            rv$processed_data <- rv$raw_data_trans %>%
-              mutate(
-                doc_id = row_number(),
-                PY = as.numeric(PY) %||% NA_real_,
-                ABCN = as.character(ABCN) %||% ""
-              ) %>%
-              filter(!is.na(PY), PY >= 1900, PY <= year(Sys.Date()))
-          }
-          
-          # 初始化翻译后的处理数据
-          rv$translated_processed_data <- rv$processed_data %>%
-            mutate(ABCN = NA_character_)
-          
-          show_notification(paste("成功加载数据：共", nrow(rv$raw_data_trans), "条记录"), "message")
+        # 读取Excel文件
+        raw_data <- read_excel(input$file_translate$datapath, sheet = 1, col_names = TRUE)
+        
+        # 将所有列转换为字符类型
+        for (i in 1:ncol(raw_data)) {
+          raw_data[[i]] <- as.character(raw_data[[i]])
         }
+        raw_data[is.na(raw_data)] <- ""
+        
+        # 检查是否包含必要的列
+        required_cols <- c("AB", "PY")  # 至少需要摘要和年份
+        if (!all(required_cols %in% names(raw_data))) {
+          missing_cols <- required_cols[!required_cols %in% names(raw_data)]
+          show_notification(paste("上传的文件中缺少以下必要列：", 
+                                  paste(missing_cols, collapse = ", ")), "error")
+          rv$raw_data_trans <- NULL
+          return()
+        }
+        
+        # 保存原始翻译数据
+        rv$raw_data_trans <- raw_data
+        
+        # 创建用于分词处理的数据结构
+        processed_df <- raw_data %>%
+          mutate(
+            doc_id = row_number(),
+            PY = as.numeric(PY),
+            # 如果存在TI列则保留，否则创建空列
+            TI = if ("TI" %in% names(.)) as.character(TI) else "",
+            # 如果存在DE列则保留，否则创建空列
+            DE = if ("DE" %in% names(.)) as.character(DE) else "",
+            # 如果存在AU列则保留，否则创建空列
+            AU = if ("AU" %in% names(.)) as.character(AU) else "",
+            # 初始化中文摘要列为空
+            ABCN = NA_character_
+          ) %>%
+          filter(!is.na(PY), PY >= 1900, PY <= year(Sys.Date())) %>%
+          select(doc_id, TI, AU, PY, DE, AB, ABCN, everything())
+        
+        # 保存到processed_data
+        if (is.null(rv$processed_data)) {
+          rv$processed_data <- processed_df
+        } else {
+          # 如果已有数据，追加新数据
+          max_doc_id <- max(rv$processed_data$doc_id, na.rm = TRUE)
+          processed_df$doc_id <- processed_df$doc_id + max_doc_id
+          rv$processed_data <- bind_rows(rv$processed_data, processed_df)
+        }
+        
+        # 初始化翻译后的处理数据
+        rv$translated_processed_data <- processed_df
+        
+        show_notification(paste("成功加载数据：共", nrow(raw_data), "条记录"), "message")
+        
       }, error = function(e) {
         show_notification(paste("读取文件出错：", e$message), "error")
         rv$raw_data_trans <- NULL
@@ -1020,7 +1224,7 @@ ui <- dashboardPage(
     }
   })
   
-  # 获取翻译数据
+  # 获取翻译数据 - 修复版本
   get_translation_data <- reactive({
     if (is.null(input$data_source)) return(NULL)
     
@@ -1031,7 +1235,9 @@ ui <- dashboardPage(
         return(NULL)
       }
       data <- rv$filtered_search_data
-      data$AB <- as.character(data$AB)
+      # 确保所有列为字符类型
+      data <- data %>%
+        mutate(across(everything(), as.character))
       return(data)
     } else {
       req(rv$raw_data_trans)
@@ -1047,16 +1253,23 @@ ui <- dashboardPage(
     }
   })
   
-  # 核心翻译逻辑 - 修复进度显示
+  # 核心翻译逻辑 - 修复版本
   observeEvent(input$run_translate, {
-    translation_data <- get_translation_data()
-    if (is.null(translation_data)) {
+    # 检查API密钥
+    if (is.null(rv$api_key) || !rv$api_valid) {
+      show_notification("请先在API配置页面设置有效的API密钥！", "error")
       return()
     }
     
-    api_key_to_use <- if (input$api_key != "") input$api_key else input$api_key_config
-    if (api_key_to_use == "" || !grepl("^sk-", api_key_to_use)) {
-      show_notification("请输入有效的API密钥（以sk-开头）！", "error")
+    translation_data <- get_translation_data()
+    if (is.null(translation_data)) {
+      show_notification("没有可翻译的数据，请先上传文件或进行检索筛选", "warning")
+      return()
+    }
+    
+    # 检查AB列是否有内容
+    if (sum(!is.na(translation_data$AB) & trimws(translation_data$AB) != "") == 0) {
+      show_notification("没有找到非空的英文摘要（AB列）", "warning")
       return()
     }
     
@@ -1112,9 +1325,35 @@ ui <- dashboardPage(
         return()
       }
       
+      # 获取当前摘要文本
+      current_ab <- translation_data$AB[i]
+      
+      # 检查是否为空摘要
+      if (is.na(current_ab) || trimws(current_ab) == "") {
+        translations[i] <- ""
+        # 更新进度
+        rv$current_progress <- round((i / total_records) * 100, 1)
+        session$sendCustomMessage("updateProgress", list(progress = rv$current_progress))
+        
+        # 更新状态显示
+        if (i %% 5 == 0 || i == total_records) {
+          output$trans_status <- renderPrint({
+            cat(sprintf("正在处理：%d/%d 条 (%.1f%%) - 跳过空摘要\n", 
+                        i, total_records, rv$current_progress))
+            success_sofar <- sum(!grepl("失败", translations[1:i]) & translations[1:i] != "", na.rm = TRUE)
+            empty_sofar <- sum(translations[1:i] == "", na.rm = TRUE)
+            cat(sprintf("当前成功：%d 条，跳过空摘要：%d 条\n", success_sofar, empty_sofar))
+          })
+        }
+        
+        Sys.sleep(delay_seconds/2)  # 空摘要时等待时间减半
+        next
+      }
+      
+      # 调用翻译函数
       translations[i] <- translate_with_deepseek(
-        text = translation_data$AB[i],
-        api_key = api_key_to_use,
+        text = current_ab,
+        api_key = rv$api_key,
         max_tokens = max_tokens
       )
       
@@ -1128,11 +1367,14 @@ ui <- dashboardPage(
       session$sendCustomMessage("updateProgress", list(progress = rv$current_progress))
       
       # 更新状态显示
-      if (i %% 5 == 0 || i == total_records) {  # 每5条更新一次状态，减少刷新频率
+      if (i %% 5 == 0 || i == total_records) {
         output$trans_status <- renderPrint({
           cat(sprintf("正在处理：%d/%d 条 (%.1f%%)\n", i, total_records, rv$current_progress))
           success_sofar <- sum(!grepl("失败", translations[1:i]) & translations[1:i] != "", na.rm = TRUE)
-          cat(sprintf("当前成功：%d 条\n", success_sofar))
+          fail_sofar <- sum(grepl("失败", translations[1:i]), na.rm = TRUE)
+          empty_sofar <- sum(translations[1:i] == "", na.rm = TRUE)
+          cat(sprintf("当前成功：%d 条，失败：%d 条，空摘要：%d 条\n", 
+                      success_sofar, fail_sofar, empty_sofar))
         })
       }
       
@@ -1146,7 +1388,13 @@ ui <- dashboardPage(
         mutate(
           ABCN_trans = translations,
           en_length = nchar(trimws(as.character(AB))),
-          cn_length = nchar(trimws(as.character(ABCN_trans)))
+          cn_length = nchar(trimws(as.character(ABCN_trans))),
+          translation_status = case_when(
+            is.na(AB) | trimws(AB) == "" ~ "空摘要",
+            grepl("失败", ABCN_trans) ~ "翻译失败",
+            ABCN_trans != "" ~ "成功",
+            TRUE ~ "未知"
+          )
         )
       
       # 确保translated_processed_data完整
@@ -1162,9 +1410,8 @@ ui <- dashboardPage(
       # 同时更新processed_data（如果存在相同的doc_id）
       if (!is.null(rv$processed_data) && nrow(rv$processed_data) >= total_records) {
         for (i in 1:total_records) {
-          doc_id <- rv$translated_processed_data$doc_id[i]
-          if (doc_id <= nrow(rv$processed_data)) {
-            rv$processed_data$ABCN[doc_id] <- translations[i]
+          if (i <= nrow(rv$processed_data)) {
+            rv$processed_data$ABCN[i] <- translations[i]
           }
         }
       }
@@ -1172,9 +1419,9 @@ ui <- dashboardPage(
       # 最终状态显示
       output$trans_status <- renderPrint({
         translations_char <- as.character(translations)
-        success_count <- sum(!grepl("失败", translations_char) & translations_char != "")
-        fail_count <- sum(grepl("失败", translations_char))
-        empty_count <- sum(translations_char == "")
+        success_count <- sum(!grepl("失败", translations_char) & translations_char != "", na.rm = TRUE)
+        fail_count <- sum(grepl("失败", translations_char), na.rm = TRUE)
+        empty_count <- sum(is.na(translation_data$AB) | trimws(translation_data$AB) == "", na.rm = TRUE)
         
         cat("翻译任务完成！\n")
         cat(sprintf("总记录数：%d 条\n", total_records))
@@ -1186,39 +1433,51 @@ ui <- dashboardPage(
       session$sendCustomMessage("updateProgress", list(progress = 100))
       
       output$preview_table <- renderTable({
+        req(rv$translated_data)
         rv$translated_data %>%
-          select(AB, ABCN_trans) %>%
+          select(AB, ABCN_trans, translation_status) %>%
           head(5) %>%
           mutate(
-            AB = ifelse(nchar(as.character(AB)) > 80, paste0(substr(as.character(AB), 1, 80), "..."), as.character(AB)),
-            ABCN_trans = ifelse(nchar(as.character(ABCN_trans)) > 80, paste0(substr(as.character(ABCN_trans), 1, 80), "..."), as.character(ABCN_trans))
+            AB = ifelse(nchar(as.character(AB)) > 80, 
+                        paste0(substr(as.character(AB), 1, 80), "..."), 
+                        as.character(AB)),
+            ABCN_trans = ifelse(nchar(as.character(ABCN_trans)) > 80, 
+                                paste0(substr(as.character(ABCN_trans), 1, 80), "..."), 
+                                as.character(ABCN_trans))
           ) %>%
-          rename("英文摘要" = AB, "中文翻译" = ABCN_trans)
+          rename("英文摘要" = AB, "中文翻译" = ABCN_trans, "状态" = translation_status)
       }, striped = TRUE, hover = TRUE)
       
       output$preview_table_full <- renderTable({
+        req(rv$translated_data)
         rv$translated_data %>%
-          select(AB, ABCN_trans) %>%
+          select(AB, ABCN_trans, translation_status) %>%
           head(10) %>%
           mutate(
-            AB = ifelse(nchar(as.character(AB)) > 100, paste0(substr(as.character(AB), 1, 100), "..."), as.character(AB)),
-            ABCN_trans = ifelse(nchar(as.character(ABCN_trans)) > 100, paste0(substr(as.character(ABCN_trans), 1, 100), "..."), as.character(ABCN_trans))
+            AB = ifelse(nchar(as.character(AB)) > 100, 
+                        paste0(substr(as.character(AB), 1, 100), "..."), 
+                        as.character(AB)),
+            ABCN_trans = ifelse(nchar(as.character(ABCN_trans)) > 100, 
+                                paste0(substr(as.character(ABCN_trans), 1, 100), "..."), 
+                                as.character(ABCN_trans))
           ) %>%
-          rename("英文摘要" = AB, "中文翻译" = ABCN_trans)
+          rename("英文摘要" = AB, "中文翻译" = ABCN_trans, "状态" = translation_status)
       }, striped = TRUE, hover = TRUE)
       
       output$trans_stats <- renderPrint({
+        req(rv$translated_data)
         stats_data <- rv$translated_data %>%
           summarise(
             数据来源 = ifelse(input$data_source == "search_result", "检索模块结果", "上传文件"),
             总记录数 = n(),
-            空英文摘要数 = sum(en_length == 0, na.rm = TRUE),
-            成功翻译数 = sum(!grepl("失败", as.character(ABCN_trans)) & as.character(ABCN_trans) != "", na.rm = TRUE),
+            空英文摘要数 = sum(is.na(AB) | trimws(AB) == "", na.rm = TRUE),
+            成功翻译数 = sum(translation_status == "成功", na.rm = TRUE),
+            翻译失败数 = sum(translation_status == "翻译失败", na.rm = TRUE),
             翻译成功率 = ifelse((总记录数 - 空英文摘要数) > 0, 
                            round(成功翻译数 / (总记录数 - 空英文摘要数) * 100, 1), 
                            0),
             平均英文摘要长度 = round(mean(en_length, na.rm = TRUE), 1),
-            平均中文摘要长度 = round(mean(cn_length, na.rm = TRUE), 1)
+            平均中文摘要长度 = round(mean(cn_length[cn_length > 0], na.rm = TRUE), 1)
           )
         print(stats_data)
       })
@@ -1231,21 +1490,29 @@ ui <- dashboardPage(
     }
   })
   
-  # 下载翻译结果
+  # 下载翻译结果 - 修复版本
   output$download_trans_result <- downloadHandler(
     filename = function() {
-      paste0("翻译结果_", Sys.Date(), ".xlsx")
+      paste0("翻译结果_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".xlsx")
     },
     content = function(file) {
+      req(rv$translated_data)
       output_data <- rv$translated_data %>%
-        select(-any_of(c("en_length", "cn_length")))
+        select(-any_of(c("en_length", "cn_length", "translation_status")))
       write_xlsx(output_data, file)
+      show_notification("翻译结果导出成功！", "message")
     }
   )
   
-  # ==================== 分词处理模块（修改：使用翻译后的数据）====================
+  # ==================== 分词处理模块 ====================
   
   observeEvent(input$start_segment, {
+    # 检查API密钥
+    if (is.null(rv$api_key) || !rv$api_valid) {
+      show_notification("请先在API配置页面设置有效的API密钥！", "error")
+      return()
+    }
+    
     # 优先使用翻译后的处理数据（translated_processed_data），如果没有则使用原始处理数据
     segment_data <- if (!is.null(rv$translated_processed_data) && nrow(rv$translated_processed_data) > 0) {
       # 检查是否有翻译后的中文摘要
@@ -1261,12 +1528,6 @@ ui <- dashboardPage(
     }
     
     req(segment_data)
-    
-    api_key_to_use <- if (input$api_key != "") input$api_key else input$api_key_config
-    if (api_key_to_use == "" || !grepl("^sk-", api_key_to_use)) {
-      show_notification("请输入有效的API密钥（以sk-开头）！", "error")
-      return()
-    }
     
     if (rv$is_segmenting) {
       show_notification("正在分词中，请等待...", "warning")
@@ -1316,7 +1577,7 @@ ui <- dashboardPage(
         
         result <- segment_chinese_with_deepseek(
           text, 
-          api_key_to_use, 
+          rv$api_key,  # 使用全局API密钥
           doc_id,
           max_tokens = input$max_tokens,
           model = input$model,
@@ -1448,7 +1709,7 @@ ui <- dashboardPage(
     }
   )
   
-  # ==================== 词频分析模块 ====================
+  # ==================== 词频分析模块（优化PDF导出）====================
   
   output$freq_plot <- renderPlot({
     req(rv$word_freq)
@@ -1460,7 +1721,8 @@ ui <- dashboardPage(
     
     if (nrow(data) == 0) {
       ggplot() + 
-        geom_text(aes(x=1, y=1, label="无符合条件的词汇"), size=12) + 
+        geom_text(aes(x = 1, y = 1, label = "无符合条件的词汇"), 
+                  size = 12, family = "FangSong") + 
         theme_void()
     } else {
       ggplot(data, aes(x = reorder(word, n), y = n, fill = n)) +
@@ -1468,8 +1730,13 @@ ui <- dashboardPage(
         coord_flip() +
         scale_fill_gradient(low = "#56B1F7", high = "#132B43") +
         labs(x = "词汇", y = "频次", title = "高频词汇分布") +
-        theme_minimal() +
-        theme(legend.position = "none")
+        theme_minimal(base_size = 14) +
+        theme(
+          plot.title = element_text(hjust = 0.5, face = "bold", size = 16, family = "FangSong"),
+          axis.text = element_text(family = "FangSong", size = 10),
+          axis.title = element_text(family = "FangSong", size = 12),
+          legend.position = "none"
+        )
     }
   })
   
@@ -1512,19 +1779,24 @@ ui <- dashboardPage(
         coord_flip() +
         scale_fill_gradient(low = "#56B1F7", high = "#132B43") +
         labs(x = "词汇", y = "频次", title = "高频词汇分布") +
-        theme_minimal() +
-        theme(legend.position = "none")
+        theme_minimal(base_size = 14) +
+        theme(
+          plot.title = element_text(hjust = 0.5, face = "bold", size = 16, family = "FangSong"),
+          axis.text = element_text(family = "FangSong", size = 10),
+          axis.title = element_text(family = "FangSong", size = 12),
+          legend.position = "none"
+        )
       
       if (input$freq_plot_format == "pdf") {
-        ggsave(file, plot = p, device = "pdf", width = 12, height = 8, dpi = 300)
+        ggsave(file, plot = p, device = cairo_pdf, width = 12, height = 8, dpi = 300, bg = "white")
       } else {
-        ggsave(file, plot = p, device = "jpeg", width = 12, height = 8, dpi = 300)
+        ggsave(file, plot = p, device = "jpeg", width = 12, height = 8, dpi = 300, bg = "white")
       }
       show_notification("词频分布图导出成功！", "message")
     }
   )
   
-  # ==================== 时间趋势模块 ====================
+  # ==================== 时间趋势模块（优化PDF导出）====================
   
   output$trend_plot <- renderPlot({
     req(rv$keyword_trend)
@@ -1532,7 +1804,8 @@ ui <- dashboardPage(
     
     if (is.null(input$trend_keywords) || length(input$trend_keywords) == 0) {
       ggplot() + 
-        geom_text(aes(x=1, y=1, label="请先选择至少一个关键词"), size=12) + 
+        geom_text(aes(x = 1, y = 1, label = "请先选择至少一个关键词"), 
+                  size = 12, family = "FangSong") + 
         theme_void()
       return()
     }
@@ -1544,7 +1817,22 @@ ui <- dashboardPage(
       ungroup()
     
     p <- ggplot(plot_data, aes(x = PY, y = rel_freq, color = word, group = word)) +
-      geom_line(size = 1.2)
+      geom_line(size = 1.2) +
+      labs(
+        title = "关键词时间演变趋势",
+        x = "年份",
+        y = "相对频率 (%)",
+        color = "关键词"
+      ) +
+      theme_minimal(base_size = 14) +
+      theme(
+        plot.title = element_text(hjust = 0.5, face = "bold", size = 16, family = "FangSong"),
+        axis.text = element_text(family = "FangSong", size = 10),
+        axis.title = element_text(family = "FangSong", size = 12),
+        legend.text = element_text(family = "FangSong", size = 10),
+        legend.title = element_text(family = "FangSong", size = 11, face = "bold"),
+        legend.position = "right"
+      )
     
     if (input$show_points) {
       p <- p + geom_point(size = 2, alpha = 0.7)
@@ -1554,14 +1842,10 @@ ui <- dashboardPage(
       p <- p + geom_smooth(method = "loess", se = FALSE, span = input$smooth_span)
     }
     
-    p + labs(
-      title = "关键词时间演变趋势",
-      x = "年份",
-      y = "相对频率 (%)",
-      color = "关键词"
-    ) +
-      theme_minimal() +
-      theme(legend.position = "right")
+    p <- p + scale_x_continuous(breaks = pretty(plot_data$PY, n = 8)) +
+      scale_y_continuous(labels = scales::percent_format(scale = 1))
+    
+    print(p)
   })
   
   output$download_trend_plot <- downloadHandler(
@@ -1579,31 +1863,43 @@ ui <- dashboardPage(
       
       p <- ggplot(plot_data, aes(x = PY, y = rel_freq, color = word, group = word)) +
         geom_line(size = 1.2)
+      
       if (input$show_points) {
         p <- p + geom_point(size = 2, alpha = 0.7)
       }
+      
       if (input$show_smooth) {
         p <- p + geom_smooth(method = "loess", se = FALSE, span = input$smooth_span)
       }
+      
       p <- p + labs(
         title = "关键词时间演变趋势",
         x = "年份",
         y = "相对频率 (%)",
         color = "关键词"
       ) +
-        theme_minimal() +
-        theme(legend.position = "right")
+        theme_minimal(base_size = 14) +
+        theme(
+          plot.title = element_text(hjust = 0.5, face = "bold", size = 16, family = "FangSong"),
+          axis.text = element_text(family = "FangSong", size = 10),
+          axis.title = element_text(family = "FangSong", size = 12),
+          legend.text = element_text(family = "FangSong", size = 10),
+          legend.title = element_text(family = "FangSong", size = 11, face = "bold"),
+          legend.position = "right"
+        ) +
+        scale_x_continuous(breaks = pretty(plot_data$PY, n = 8)) +
+        scale_y_continuous(labels = scales::percent_format(scale = 1))
       
       if (input$trend_plot_format == "pdf") {
-        ggsave(file, plot = p, device = "pdf", width = 12, height = 8, dpi = 300)
+        ggsave(file, plot = p, device = cairo_pdf, width = 12, height = 8, dpi = 300, bg = "white")
       } else {
-        ggsave(file, plot = p, device = "jpeg", width = 12, height = 8, dpi = 300)
+        ggsave(file, plot = p, device = "jpeg", width = 12, height = 8, dpi = 300, bg = "white")
       }
       show_notification("关键词趋势图导出成功！", "message")
     }
   )
   
-  # ==================== 热力图模块 ====================
+  # ==================== 热力图模块（优化PDF导出）====================
   
   output$heatmap_plot <- renderPlot({
     req(rv$keyword_trend)
@@ -1619,7 +1915,8 @@ ui <- dashboardPage(
     
     if (nrow(data) == 0) {
       ggplot() + 
-        geom_text(aes(x=1, y=1, label="无足够数据生成热力图"), size=12) + 
+        geom_text(aes(x = 1, y = 1, label = "无足够数据生成热力图"), 
+                  size = 12, family = "FangSong") + 
         theme_void()
       return()
     }
@@ -1629,12 +1926,26 @@ ui <- dashboardPage(
                      "蓝-黄-红" = scale_fill_gradient2(low = "#313695", mid = "#FFFFBF", high = "#A50026"),
                      "紫-黄" = scale_fill_gradient(low = "#FDE725", high = "#440154"))
     
-    ggplot(data, aes(x = PY, y = reorder(word, count), fill = freq_scaled)) +
+    p <- ggplot(data, aes(x = PY, y = reorder(word, count), fill = freq_scaled)) +
       geom_tile(color = "white") +
       colors +
-      labs(title = "关键词时间分布热力图", x = "年份", y = "关键词") +
-      theme_minimal() +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+      labs(
+        title = "关键词时间分布热力图",
+        x = "年份",
+        y = "关键词"
+      ) +
+      theme_minimal(base_size = 12) +
+      theme(
+        plot.title = element_text(hjust = 0.5, face = "bold", size = 16, family = "FangSong"),
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 9, family = "FangSong"),
+        axis.text.y = element_text(size = 9, family = "FangSong"),
+        axis.title = element_text(family = "FangSong", size = 11),
+        legend.text = element_text(family = "FangSong", size = 9),
+        legend.title = element_text(family = "FangSong", size = 10)
+      ) +
+      scale_x_continuous(breaks = pretty(data$PY, n = 8))
+    
+    print(p)
   })
   
   output$download_heatmap_plot <- downloadHandler(
@@ -1660,20 +1971,32 @@ ui <- dashboardPage(
       p <- ggplot(plot_data, aes(x = PY, y = reorder(word, count), fill = freq_scaled)) +
         geom_tile(color = "white") +
         colors +
-        labs(title = "关键词时间分布热力图", x = "年份", y = "关键词") +
-        theme_minimal() +
-        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+        labs(
+          title = "关键词时间分布热力图",
+          x = "年份",
+          y = "关键词"
+        ) +
+        theme_minimal(base_size = 12) +
+        theme(
+          plot.title = element_text(hjust = 0.5, face = "bold", size = 16, family = "FangSong"),
+          axis.text.x = element_text(angle = 45, hjust = 1, size = 9, family = "FangSong"),
+          axis.text.y = element_text(size = 9, family = "FangSong"),
+          axis.title = element_text(family = "FangSong", size = 11),
+          legend.text = element_text(family = "FangSong", size = 9),
+          legend.title = element_text(family = "FangSong", size = 10)
+        ) +
+        scale_x_continuous(breaks = pretty(plot_data$PY, n = 8))
       
       if (input$heatmap_plot_format == "pdf") {
-        ggsave(file, plot = p, device = "pdf", width = 14, height = 10, dpi = 300)
+        ggsave(file, plot = p, device = cairo_pdf, width = 14, height = 10, dpi = 300, bg = "white")
       } else {
-        ggsave(file, plot = p, device = "jpeg", width = 14, height = 10, dpi = 300)
+        ggsave(file, plot = p, device = "jpeg", width = 14, height = 10, dpi = 300, bg = "white")
       }
       show_notification("热力图导出成功！", "message")
     }
   )
   
-  # ==================== 气泡图模块 ====================
+  # ==================== 气泡图模块（优化PDF导出）====================
   
   output$bubble_plot <- renderPlot({
     req(rv$trend_metrics)
@@ -1684,25 +2007,38 @@ ui <- dashboardPage(
     
     if (nrow(data) == 0) {
       ggplot() + 
-        geom_text(aes(x=1, y=1, label="无符合条件的关键词（可降低最小频次）"), size=10) + 
+        geom_text(aes(x = 1, y = 1, label = "无符合条件的关键词（可降低最小频次）"), 
+                  size = 10, family = "FangSong") + 
         theme_void()
       return()
     }
     
-    ggplot(data, aes(x = first_active, y = mean_freq, 
-                     size = total_count, color = trend_category)) +
+    p <- ggplot(data, aes(x = first_active, y = mean_freq, 
+                          size = total_count, color = trend_category)) +
       geom_point(alpha = 0.7) +
-      geom_text_repel(aes(label = word), size = 3, max.overlaps = 15) +
+      geom_text_repel(aes(label = word), size = 3.5, family = "FangSong", max.overlaps = 15) +
       scale_size_continuous(range = c(3, 15)) +
       scale_color_manual(values = c("上升趋势" = "#E74C3C", 
                                     "下降趋势" = "#3498DB", 
                                     "平稳趋势" = "#2ECC71")) +
-      labs(title = "关键词趋势气泡图",
-           x = "首次出现年份",
-           y = "平均频次",
-           size = "总频次",
-           color = "趋势类别") +
-      theme_minimal()
+      labs(
+        title = "关键词趋势气泡图",
+        x = "首次出现年份",
+        y = "平均频次",
+        size = "总频次",
+        color = "趋势类别"
+      ) +
+      theme_minimal(base_size = 14) +
+      theme(
+        plot.title = element_text(hjust = 0.5, face = "bold", size = 16, family = "FangSong"),
+        axis.text = element_text(family = "FangSong", size = 10),
+        axis.title = element_text(family = "FangSong", size = 12),
+        legend.text = element_text(family = "FangSong", size = 10),
+        legend.title = element_text(family = "FangSong", size = 11, face = "bold")
+      ) +
+      scale_x_continuous(breaks = pretty(data$first_active, n = 8))
+    
+    print(p)
   })
   
   output$trend_metrics_table <- renderDT({
@@ -1734,47 +2070,55 @@ ui <- dashboardPage(
       p <- ggplot(plot_data, aes(x = first_active, y = mean_freq, 
                                  size = total_count, color = trend_category)) +
         geom_point(alpha = 0.7) +
-        geom_text_repel(aes(label = word), size = 3, max.overlaps = 15) +
+        geom_text_repel(aes(label = word), size = 3.5, family = "FangSong", max.overlaps = 15) +
         scale_size_continuous(range = c(3, 15)) +
         scale_color_manual(values = c("上升趋势" = "#E74C3C", 
                                       "下降趋势" = "#3498DB", 
                                       "平稳趋势" = "#2ECC71")) +
-        labs(title = "关键词趋势气泡图",
-             x = "首次出现年份",
-             y = "平均频次",
-             size = "总频次",
-             color = "趋势类别") +
-        theme_minimal()
+        labs(
+          title = "关键词趋势气泡图",
+          x = "首次出现年份",
+          y = "平均频次",
+          size = "总频次",
+          color = "趋势类别"
+        ) +
+        theme_minimal(base_size = 14) +
+        theme(
+          plot.title = element_text(hjust = 0.5, face = "bold", size = 16, family = "FangSong"),
+          axis.text = element_text(family = "FangSong", size = 10),
+          axis.title = element_text(family = "FangSong", size = 12),
+          legend.text = element_text(family = "FangSong", size = 10),
+          legend.title = element_text(family = "FangSong", size = 11, face = "bold")
+        ) +
+        scale_x_continuous(breaks = pretty(plot_data$first_active, n = 8))
       
       if (input$bubble_plot_format == "pdf") {
-        ggsave(file, plot = p, device = "pdf", width = 12, height = 8, dpi = 300)
+        ggsave(file, plot = p, device = cairo_pdf, width = 12, height = 8, dpi = 300, bg = "white")
       } else {
-        ggsave(file, plot = p, device = "jpeg", width = 12, height = 8, dpi = 300)
+        ggsave(file, plot = p, device = "jpeg", width = 12, height = 8, dpi = 300, bg = "white")
       }
       show_notification("气泡图导出成功！", "message")
     }
   )
   
-  # ==================== 词云图模块（修复版）====================
-  # 8. 词云图（修复下载和显示位置问题）
+  # ==================== 词云图模块（优化PDF导出）====================
+  
   output$wordcloud_plot <- renderWordcloud2({
     req(rv$word_freq)
-    input$generate_cloud # 触发刷新
+    input$generate_cloud
     
     data <- head(rv$word_freq, input$top_n_words)
     
-    # 防崩溃：无数据时返回空
     if (nrow(data) == 0) {
-      return(wordcloud2(data.frame(word="无数据", freq=1), size=1))
+      return(wordcloud2(data.frame(word = "无数据", freq = 1), size = 1))
     }
     
-    # 生成词云对象并存储
     wc_obj <- wordcloud2(
       data = data,
       size = input$wordcloud_size,
       minSize = 5,
       gridSize = 10,
-      fontFamily = "Microsoft YaHei",
+      fontFamily = "FangSong, Microsoft YaHei, SimHei",
       fontWeight = "bold",
       color = colorRampPalette(brewer.pal(8, "Dark2"))(nrow(data)),
       backgroundColor = input$bg_color,
@@ -1786,9 +2130,7 @@ ui <- dashboardPage(
                      "三角形" = "triangle")
     )
     
-    # 保存词云对象到反应式值
     rv$wordcloud_obj <- wc_obj
-    
     return(wc_obj)
   })
   
@@ -1796,7 +2138,6 @@ ui <- dashboardPage(
   observe({
     runjs('
     setTimeout(function() {
-      // 找到词云图的容器并添加居中样式
       var wordcloudDiv = document.querySelector("#wordcloud_plot");
       if (wordcloudDiv) {
         wordcloudDiv.style.display = "flex";
@@ -1804,7 +2145,6 @@ ui <- dashboardPage(
         wordcloudDiv.style.alignItems = "center";
         wordcloudDiv.style.width = "100%";
         
-        // 找到canvas并设置样式
         var canvas = wordcloudDiv.querySelector("canvas");
         if (canvas) {
           canvas.style.margin = "0 auto";
@@ -1815,7 +2155,6 @@ ui <- dashboardPage(
   ')
   })
   
-  # 修复下载JPG功能
   output$download_cloud_jpg <- downloadHandler(
     filename = function() {
       paste0("词云图_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
@@ -1823,22 +2162,18 @@ ui <- dashboardPage(
     content = function(file) {
       req(rv$wordcloud_obj)
       
-      # 创建临时HTML文件
       temp_html <- tempfile(fileext = ".html")
       
-      # 保存词云对象到HTML文件
-      saveWidget(
-        rv$wordcloud_obj, 
-        temp_html, 
-        selfcontained = TRUE,
-        libdir = NULL,
-        background = input$bg_color
-      )
+      saveWidget(rv$wordcloud_obj, temp_html, selfcontained = TRUE, libdir = NULL, background = input$bg_color)
       
-      # 使用webshot2将HTML转为JPG
+      html_lines <- readLines(temp_html, warn = FALSE)
+      font_style <- '<style> * { font-family: "FangSong", "Microsoft YaHei", "SimHei", sans-serif; } </style>'
+      html_lines <- sub('(<head>)', paste0('\\1\n', font_style), html_lines)
+      writeLines(html_lines, temp_html)
+      
       tryCatch({
         webshot2::webshot(
-          url = temp_html,
+          url = paste0("file://", normalizePath(temp_html)),
           file = file,
           vwidth = 1200,
           vheight = 800,
@@ -1846,10 +2181,7 @@ ui <- dashboardPage(
           delay = 3,
           zoom = 2
         )
-        
-        # 清理临时文件
         unlink(temp_html)
-        
         show_notification("词云图已导出为JPG格式！", "message")
       }, error = function(e) {
         show_notification(paste("导出失败:", e$message), "error")
@@ -1857,7 +2189,6 @@ ui <- dashboardPage(
     }
   )
   
-  # 修复下载PDF功能
   output$download_cloud_pdf <- downloadHandler(
     filename = function() {
       paste0("词云图_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".pdf")
@@ -1865,22 +2196,18 @@ ui <- dashboardPage(
     content = function(file) {
       req(rv$wordcloud_obj)
       
-      # 创建临时HTML文件
       temp_html <- tempfile(fileext = ".html")
       
-      # 保存词云对象到HTML文件
-      saveWidget(
-        rv$wordcloud_obj, 
-        temp_html, 
-        selfcontained = TRUE,
-        libdir = NULL,
-        background = input$bg_color
-      )
+      saveWidget(rv$wordcloud_obj, temp_html, selfcontained = TRUE, libdir = NULL, background = input$bg_color)
       
-      # 使用webshot2将HTML转为PDF
+      html_lines <- readLines(temp_html, warn = FALSE)
+      font_style <- '<style> * { font-family: "FangSong", "Microsoft YaHei", "SimHei", sans-serif; } </style>'
+      html_lines <- sub('(<head>)', paste0('\\1\n', font_style), html_lines)
+      writeLines(html_lines, temp_html)
+      
       tryCatch({
         webshot2::webshot(
-          url = temp_html,
+          url = paste0("file://", normalizePath(temp_html)),
           file = file,
           vwidth = 1200,
           vheight = 800,
@@ -1888,10 +2215,7 @@ ui <- dashboardPage(
           delay = 3,
           zoom = 2
         )
-        
-        # 清理临时文件
         unlink(temp_html)
-        
         show_notification("词云图已导出为PDF格式！", "message")
       }, error = function(e) {
         show_notification(paste("导出失败:", e$message), "error")
@@ -1899,7 +2223,6 @@ ui <- dashboardPage(
     }
   )
   
-  # 添加一个观察器来重新居中词云图（当生成词云或窗口大小改变时）
   observeEvent(input$generate_cloud, {
     runjs('
     setTimeout(function() {
@@ -2012,9 +2335,8 @@ ui <- dashboardPage(
     req(rv$review_data)
     
     # 检查API密钥
-    api_key <- if (input$api_key_review != "") input$api_key_review else input$api_key_config
-    if (api_key == "" || !grepl("^sk-", api_key)) {
-      show_notification("请输入有效的DeepSeek API密钥！", "error")
+    if (is.null(rv$api_key) || !rv$api_valid) {
+      show_notification("请先在API配置页面设置有效的API密钥！", "error")
       return()
     }
     
@@ -2119,7 +2441,7 @@ ui <- dashboardPage(
       )
       
       headers <- add_headers(
-        "Authorization" = paste("Bearer", api_key),
+        "Authorization" = paste("Bearer", rv$api_key),  # 使用全局API密钥
         "Content-Type" = "application/json"
       )
       
@@ -2279,8 +2601,6 @@ ui <- dashboardPage(
       show_notification("参考文献下载成功！", "message")
     }
   )
-  
-  
   
   
   

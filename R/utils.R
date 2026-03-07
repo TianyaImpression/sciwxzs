@@ -15,7 +15,7 @@
 #' @importFrom httr add_headers POST timeout status_code content
 #' @importFrom jsonlite toJSON
 #' @export
-translate_with_deepseek <- function(text, api_key, max_tokens = 10000) {
+translate_with_deepseek <- function(text, api_key, max_tokens = 8000) {
   if (is.na(text) || is.null(text) || trimws(text) == "") {
     return("")
   }
