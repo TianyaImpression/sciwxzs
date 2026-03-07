@@ -4,7 +4,7 @@
 \alias{translate_with_deepseek}
 \title{使用 DeepSeek API 进行摘要翻译}
 \usage{
-translate_with_deepseek(text, api_key, max_tokens = 10000)
+translate_with_deepseek(text, api_key, max_tokens = 8000)
 }
 \arguments{
 \item{text}{需要翻译的英文文本}

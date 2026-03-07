@@ -15,7 +15,8 @@
 #' @importFrom writexl write_xlsx
 #' @importFrom htmlwidgets saveWidget
 #' @importFrom webshot2 webshot
-#' @importFrom dplyr mutate filter select summarise group_by ungroup arrange pull n row_number case_when any_of
+#' @importFrom dplyr mutate filter select summarise group_by ungroup arrange pull n row_number case_when any_of rename bind_rows across everything count top_n left_join
+#' @importFrom tibble tibble
 #' @importFrom tidyr complete unnest
 #' @importFrom purrr map_int map_chr
 #' @importFrom lubridate year
@@ -23,7 +24,7 @@
 #' @importFrom RColorBrewer brewer.pal
 #' @importFrom ggrepel geom_text_repel
 #' @importFrom rlang .data
-#'
+#' @importFrom readr write_csv write_rds
 #' @export
 run_sciwxzs <- function() {
 
@@ -54,8 +55,8 @@ ui <- dashboardPage(
     div(
       style = "padding: 15px;",
       h4("全局设置"),
-      numericInput("max_tokens", "Max Tokens:", 1000, min = 100, max = 4000),
-      numericInput("delay_seconds", "API延迟(秒):", 0.5, min = 0.1, max = 5, step = 0.1),
+      numericInput("max_tokens", "Max Tokens:", 8000, min = 100, max = 8000),
+      numericInput("delay_seconds", "API延迟(秒):", 0.1, min = 0.1, max = 5, step = 0.1),
       numericInput("top_n_words", "显示词数:", 100, min = 10, max = 500),
       checkboxInput("test_mode", "测试模式(仅前10条)", FALSE),
       actionButton("reset_all", "重置所有", class = "btn-warning", style = "width: 80%; margin-top: 10px;")
@@ -202,7 +203,7 @@ ui <- dashboardPage(
                   numericInput(
                     inputId = "max_tokens_trans",
                     label = "最大Token数",
-                    value = 2000,
+                    value = 8000,
                     min = 500,
                     max = 8192,
                     step = 500
@@ -210,7 +211,7 @@ ui <- dashboardPage(
                   numericInput(
                     inputId = "delay_seconds_trans",
                     label = "请求间隔(秒)",
-                    value = 1,
+                    value = 0.2,
                     min = 0.1,
                     max = 10,
                     step = 0.1
@@ -887,24 +888,34 @@ server <- function(input, output, session) {
   # 1. 读取数据
   observeEvent(input$load_data, {
     if (input$use_demo) {
-      # 创建示例数据
-      rv$raw_data_search <- tibble(
-        TI = c("示例标题1", "示例标题2", "示例标题3", "示例标题4", "示例标题5"),
-        AB = c("This is a study about machine learning and deep learning.", 
-               "Natural language processing for text mining applications.",
-               "Artificial intelligence based data analysis methods.",
-               "Climate change impacts on Tibetan Plateau ecosystem.",
-               "Biodiversity conservation in Qinghai-Tibet region."),
-        ABCN = c("这是一个关于机器学习和深度学习的研究示例。", 
-                 "自然语言处理技术在文本挖掘中的应用研究。",
-                 "基于人工智能的数据分析方法探讨。",
-                 "气候变化对青藏高原生态系统的影响。",
-                 "青藏地区生物多样性保护研究。"),
-        PY = c(2023, 2024, 2023, 2022, 2024),
-        DE = c("机器学习;深度学习", "NLP;文本挖掘", "人工智能;数据分析", 
-               "气候变化;青藏高原", "生物多样性;青藏地区")
-      )
-      show_notification("已加载示例数据", "message")
+ tryCatch({
+        # 动态获取包内文件的绝对路径
+        demo_file <- system.file("extdata", "ExampleData.xlsx", package = "sciwxzs")
+        
+        # 兼容性检查（防止在开发模式下直接 source 运行找不到文件）
+        if (demo_file == "") {
+          if (file.exists("inst/extdata/ExampleData.xlsx")) {
+            demo_file <- "inst/extdata/ExampleData.xlsx"
+          } else {
+            stop("未找到内置示例数据文件，请检查 inst/extdata/ 目录！")
+          }
+        }
+        
+        # 读取 Excel 数据
+        df <- as.data.frame(read_excel(demo_file, sheet = 1, col_names = TRUE))
+        
+        # 将所有列转换为字符类型，并处理空值
+        for (i in 1:ncol(df)) {
+          df[[i]] <- as.character(df[[i]])
+        }
+        df[is.na(df)] <- ""
+        
+        rv$raw_data_search <- df
+        show_notification(paste("成功加载内置示例数据！共", nrow(df), "条文献。"), "message")
+        
+      }, error = function(e) {
+        show_notification(paste("示例数据加载失败:", e$message), "error")
+      })
     } else {
       req(input$data_file)
       tryCatch({
@@ -1468,7 +1479,7 @@ server <- function(input, output, session) {
         req(rv$translated_data)
         stats_data <- rv$translated_data %>%
           summarise(
-            数据来源 = ifelse(input$data_source == "search_result", "检索模块结果", "上传文件"),
+            数据来源 = ifelse(input$data_source == "search_result", "数据上传与筛选结果", "上传文件"),
             总记录数 = n(),
             空英文摘要数 = sum(is.na(AB) | trimws(AB) == "", na.rm = TRUE),
             成功翻译数 = sum(translation_status == "成功", na.rm = TRUE),
@@ -2542,8 +2553,6 @@ server <- function(input, output, session) {
     tagList(
       downloadButton("download_review_txt", "下载综述(TXT)", 
                      class = "btn-success", style = "width: 100%; margin-bottom: 5px;"),
-      downloadButton("download_review_docx", "下载综述(DOCX)", 
-                     class = "btn-info", style = "width: 100%; margin-bottom: 5px;"),
       downloadButton("download_review_refs", "下载参考文献", 
                      class = "btn-warning", style = "width: 100%;")
     )
