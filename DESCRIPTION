@@ -10,9 +10,11 @@ License: What license is it under?
 Encoding: UTF-8
 LazyData: true
 Imports: 
+    bibliometrix,
     colourpicker,
     dplyr,
     DT,
+    extrafont,
     ggplot2,
     ggrepel,
     htmlwidgets,
@@ -30,6 +32,7 @@ Imports:
     shinydashboard,
     shinyjs,
     shinyWidgets,
+    stringr,
     tibble,
     tidyr,
     webshot2,

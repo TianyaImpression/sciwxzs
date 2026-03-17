@@ -8,6 +8,19 @@
   if (is.null(x)) y else x
 }
 
+#' 初始化系统字体库 (仅需运行一次)
+#' 
+#' @description 扫描并导入系统字体，用于生成带有特殊字体的 PDF 图表。
+#' @importFrom extrafont font_import loadfonts
+#' @export
+init_sciwxzs_fonts <- function() {
+  message("正在导入系统字体，这可能需要几分钟时间，请耐心等待...")
+  extrafont::font_import(prompt = FALSE)
+  extrafont::loadfonts(device = "pdf", quiet = TRUE)
+  message("字体导入完成！")
+}
+
+
 #' 使用 DeepSeek API 进行摘要翻译
 #' @param text 需要翻译的英文文本
 #' @param api_key DeepSeek API 密钥

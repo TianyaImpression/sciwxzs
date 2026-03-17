@@ -15,7 +15,7 @@
 #' @importFrom writexl write_xlsx
 #' @importFrom htmlwidgets saveWidget
 #' @importFrom webshot2 webshot
-#' @importFrom dplyr mutate filter select summarise group_by ungroup arrange pull n row_number case_when any_of rename bind_rows across everything count top_n left_join
+#' @importFrom dplyr mutate filter select summarise group_by ungroup arrange pull n row_number case_when any_of rename bind_rows across everything count top_n left_join slice slice_max
 #' @importFrom tibble tibble
 #' @importFrom tidyr complete unnest
 #' @importFrom purrr map_int map_chr
@@ -25,9 +25,16 @@
 #' @importFrom ggrepel geom_text_repel
 #' @importFrom rlang .data
 #' @importFrom readr write_csv write_rds
+#' @importFrom stringr str_split
 #' @export
 run_sciwxzs <- function() {
 
+  # 尝试加载 PDF 字体，以防用户导出词云图或趋势图时字体缺失
+  tryCatch({
+    extrafont::loadfonts(device = "pdf", quiet = TRUE)
+  }, error = function(e) {
+    warning("字体加载失败，PDF 图表可能无法正确显示中文字体。您可以尝试运行 init_sciwxzs_fonts()。")
+  })
   # ==========================================
   # 1. UI 定义
   # ==========================================
@@ -342,20 +349,52 @@ ui <- dashboardPage(
       tabItem(tabName = "wordfreq",
               fluidRow(
                 box(
+                  title = "数据源选择", status = "primary", solidHeader = TRUE, width = 12,
+                  column(6,
+                         radioButtons("freq_data_source", "选择数据来源:",
+                                      choices = list(
+                                        "使用分词模块结果" = "segment",
+                                        "上传新的分词结果" = "upload"
+                                      ),
+                                      selected = "segment",
+                                      inline = TRUE)
+                  ),
+                  column(6,
+                         conditionalPanel(
+                           condition = "input.freq_data_source == 'upload'",
+                           fileInput("freq_upload_file", "上传分词结果Excel文件",
+                                     accept = c(".xlsx", ".xls"),
+                                     width = "100%"),
+                           tags$small("文件需包含: doc_id, PY, segmented_words, word_count 列")
+                         )
+                  )
+                )
+              ),
+              fluidRow(
+                box(
                   title = "词频统计设置", status = "primary", solidHeader = TRUE, width = 3,
                   numericInput("min_freq", "最小词频:", 2, min = 1),
                   numericInput("min_word_length", "最小词长:", 2, min = 1),
                   selectInput("stopwords_lang", "停用词库:", 
                               choices = c("中文", "英文", "无"),
                               selected = "中文"),
-                  actionButton("refresh_freq", "刷新统计", class = "btn-primary"),
+                  hr(),
+                  h4("自定义停用词"),
+                  textAreaInput("custom_stopwords", "输入自定义停用词（用逗号分隔）",
+                                rows = 3,
+                                placeholder = "例如：研究,分析,方法,结果"),
+                  actionButton("refresh_freq", "刷新统计", class = "btn-primary", 
+                               style = "width: 100%;"),
+                  br(), br(),
+                  actionButton("sync_to_other_modules", "同步数据到其他分析模块", 
+                               class = "btn-info", style = "width: 100%;"),
                   hr(),
                   h4("数据导出"),
                   downloadButton("download_freq_data", "下载高频词汇表(Excel)", 
                                  class = "btn-info", style = "width: 100%; margin-bottom: 5px;"),
                   tags$div(class = "custom-select",
                            selectInput("freq_plot_format", "词频图导出格式:", 
-                                       choices = c("PDF" = "pdf", "JPG" = "jpg"),
+                                       choices = c("PDF" = "pdf", "JPG" = "jpg", "PNG" = "png"),
                                        selected = "pdf")
                   ),
                   downloadButton("download_freq_plot", "下载词频分布图", 
@@ -368,13 +407,22 @@ ui <- dashboardPage(
               ),
               fluidRow(
                 box(
+                  title = "数据统计", status = "warning", solidHeader = TRUE, width = 12,
+                  column(3, valueBoxOutput("freq_total_docs", width = 12)),
+                  column(3, valueBoxOutput("freq_total_words", width = 12)),
+                  column(3, valueBoxOutput("freq_unique_words", width = 12)),
+                  column(3, valueBoxOutput("freq_year_range", width = 12))
+                )
+              ),
+              fluidRow(
+                box(
                   title = "高频词汇表", status = "success", solidHeader = TRUE, width = 12,
                   withSpinner(DTOutput("freq_table"), type = 4)
                 )
               )
       ),
-      
-      # ==================== 6. 时间趋势页面（优化PDF导出）====================
+
+      # ==================== 6. 时间趋势页面 ====================
       tabItem(tabName = "trends",
               fluidRow(
                 box(
@@ -410,23 +458,29 @@ ui <- dashboardPage(
                 )
               )
       ),
-      
+
       # ==================== 7. 热力图页面（优化PDF导出）====================
       tabItem(tabName = "heatmap",
               fluidRow(
                 box(
                   title = "热力图设置", status = "primary", solidHeader = TRUE, width = 3,
-                  numericInput("heatmap_words", "显示词数:", 30, min = 10, max = 100),
+                  numericInput("heatmap_words", "显示词数:", 30, min = 5, max = 100),
                   selectInput("color_scale", "配色方案:",
-                              choices = c("红-绿", "蓝-黄-红", "紫-黄"),
-                              selected = "红-绿"),
+                              choices = c(
+                                "红-绿" = "red-green",
+                                "蓝-黄-红" = "blue-yellow-red",
+                                "紫-黄" = "purple-yellow",
+                                "热力图" = "heat"
+                              ),
+                              selected = "red-green"),
                   checkboxInput("cluster_rows", "对行聚类", FALSE),
+                  checkboxInput("show_numbers", "显示数值", TRUE),
                   actionButton("plot_heatmap", "生成热力图", class = "btn-primary"),
                   hr(),
                   h4("图表导出"),
                   tags$div(class = "custom-select",
                            selectInput("heatmap_plot_format", "热力图导出格式:", 
-                                       choices = c("PDF" = "pdf", "JPG" = "jpg"),
+                                       choices = c("PDF" = "pdf", "JPG" = "jpg", "PNG" = "png"),
                                        selected = "pdf")
                   ),
                   downloadButton("download_heatmap_plot", "下载时间分布热力图", 
@@ -434,28 +488,44 @@ ui <- dashboardPage(
                 ),
                 box(
                   title = "时间分布热力图", status = "info", solidHeader = TRUE, width = 9,
-                  withSpinner(plotOutput("heatmap_plot", height = 600), type = 4)
+                  withSpinner(plotOutput("heatmap_plot", height = 650), type = 4)
                 )
               )
       ),
       
-      # ==================== 8. 气泡图页面（优化PDF导出）====================
+      # ==================== 8. 气泡图页面（优化PDF导出，优化趋势分析）====================
       tabItem(tabName = "bubble",
               fluidRow(
                 box(
                   title = "气泡图设置", status = "primary", solidHeader = TRUE, width = 3,
-                  numericInput("min_total_count", "最小总频次:", 5, min = 1),
+                  numericInput("bubble_top_n", "分析关键词数量:", 450, min = 10, max = 1000),
+                  numericInput("bubble_min_freq", "最小出现次数:", 5, min = 1),
+                  numericInput("bubble_min_total", "最小总频次:", 5, min = 1),
                   selectInput("bubble_color", "配色:",
                               choices = c("Set1", "Set2", "Set3", "Dark2"),
                               selected = "Set2"),
+                  sliderInput("bubble_alpha", "透明度:", 0.7, min = 0.3, max = 1, step = 0.1),
+                  sliderInput("bubble_label_size", "标签大小:", 3.5, min = 2, max = 6, step = 0.1),
+                  checkboxInput("bubble_show_all", "显示所有关键词（不设限）", FALSE),
                   actionButton("plot_bubble", "生成气泡图", class = "btn-primary"),
+                  hr(),
+                  h4("X轴刻度设置"),
+                  radioButtons("bubble_x_axis", "X轴刻度间隔:",
+                               choices = list(
+                                 "每年" = "1",
+                                 "每2年" = "2",
+                                 "每3年" = "3",
+                                 "每5年" = "5",
+                                 "自动" = "auto"
+                               ),
+                               selected = "1"),
                   hr(),
                   h4("数据导出"),
                   downloadButton("download_trend_metrics", "下载趋势统计数据(Excel)", 
                                  class = "btn-info", style = "width: 100%; margin-bottom: 5px;"),
                   tags$div(class = "custom-select",
                            selectInput("bubble_plot_format", "气泡图导出格式:", 
-                                       choices = c("PDF" = "pdf", "JPG" = "jpg"),
+                                       choices = c("PDF" = "pdf", "JPG" = "jpg", "PNG" = "png"),
                                        selected = "pdf")
                   ),
                   downloadButton("download_bubble_plot", "下载关键词趋势气泡图", 
@@ -463,13 +533,19 @@ ui <- dashboardPage(
                 ),
                 box(
                   title = "关键词趋势气泡图", status = "info", solidHeader = TRUE, width = 9,
-                  withSpinner(plotOutput("bubble_plot", height = 500), type = 4)
+                  withSpinner(plotOutput("bubble_plot", height = 600), type = 4)
                 )
               ),
               fluidRow(
                 box(
                   title = "趋势统计", status = "success", solidHeader = TRUE, width = 12,
-                  withSpinner(DTOutput("trend_metrics_table"), type = 4)
+                  withSpinner(DTOutput("bubble_metrics_table"), type = 4)
+                )
+              ),
+              fluidRow(
+                box(
+                  title = "统计信息", status = "warning", solidHeader = TRUE, width = 12,
+                  verbatimTextOutput("bubble_stats")
                 )
               )
       ),
@@ -641,7 +717,7 @@ ui <- dashboardPage(
 # Server逻辑
 server <- function(input, output, session) {
   
-  # 反应式值存储
+# 反应式值存储
   rv <- reactiveValues(
     # API配置
     api_key = NULL,                     # 全局API密钥
@@ -676,7 +752,10 @@ server <- function(input, output, session) {
     reference_list = NULL,
     is_review_generating = FALSE,
     is_review_canceled = FALSE,
-    review_progress_log = "" 
+    review_progress_log = "",
+    
+    # 新增：存储当前使用的分词数据源
+    current_freq_data = NULL
   )
   
   # 修复点1：重写通知函数，仅使用合法的type参数
@@ -888,34 +967,24 @@ server <- function(input, output, session) {
   # 1. 读取数据
   observeEvent(input$load_data, {
     if (input$use_demo) {
- tryCatch({
-        # 动态获取包内文件的绝对路径
-        demo_file <- system.file("extdata", "ExampleData.xlsx", package = "sciwxzs")
-        
-        # 兼容性检查（防止在开发模式下直接 source 运行找不到文件）
-        if (demo_file == "") {
-          if (file.exists("inst/extdata/ExampleData.xlsx")) {
-            demo_file <- "inst/extdata/ExampleData.xlsx"
-          } else {
-            stop("未找到内置示例数据文件，请检查 inst/extdata/ 目录！")
-          }
-        }
-        
-        # 读取 Excel 数据
-        df <- as.data.frame(read_excel(demo_file, sheet = 1, col_names = TRUE))
-        
-        # 将所有列转换为字符类型，并处理空值
-        for (i in 1:ncol(df)) {
-          df[[i]] <- as.character(df[[i]])
-        }
-        df[is.na(df)] <- ""
-        
-        rv$raw_data_search <- df
-        show_notification(paste("成功加载内置示例数据！共", nrow(df), "条文献。"), "message")
-        
-      }, error = function(e) {
-        show_notification(paste("示例数据加载失败:", e$message), "error")
-      })
+      # 创建示例数据
+      rv$raw_data_search <- tibble(
+        TI = c("示例标题1", "示例标题2", "示例标题3", "示例标题4", "示例标题5"),
+        AB = c("This is a study about machine learning and deep learning.", 
+               "Natural language processing for text mining applications.",
+               "Artificial intelligence based data analysis methods.",
+               "Climate change impacts on Tibetan Plateau ecosystem.",
+               "Biodiversity conservation in Qinghai-Tibet region."),
+        ABCN = c("这是一个关于机器学习和深度学习的研究示例。", 
+                 "自然语言处理技术在文本挖掘中的应用研究。",
+                 "基于人工智能的数据分析方法探讨。",
+                 "气候变化对青藏高原生态系统的影响。",
+                 "青藏地区生物多样性保护研究。"),
+        PY = c(2023, 2024, 2023, 2022, 2024),
+        DE = c("机器学习;深度学习", "NLP;文本挖掘", "人工智能;数据分析", 
+               "气候变化;青藏高原", "生物多样性;青藏地区")
+      )
+      show_notification("已加载示例数据", "message")
     } else {
       req(input$data_file)
       tryCatch({
@@ -1479,7 +1548,7 @@ server <- function(input, output, session) {
         req(rv$translated_data)
         stats_data <- rv$translated_data %>%
           summarise(
-            数据来源 = ifelse(input$data_source == "search_result", "数据上传与筛选结果", "上传文件"),
+            数据来源 = ifelse(input$data_source == "search_result", "检索模块结果", "上传文件"),
             总记录数 = n(),
             空英文摘要数 = sum(is.na(AB) | trimws(AB) == "", na.rm = TRUE),
             成功翻译数 = sum(translation_status == "成功", na.rm = TRUE),
@@ -1669,6 +1738,9 @@ server <- function(input, output, session) {
       
       rv$segment_log <- paste(rv$segment_log, "\n分词完成！")
       show_notification("分词处理完成！", "message")
+      
+      # 保存当前数据源
+      rv$current_freq_data <- rv$segmented_data
     }
     
     rv$is_segmenting <- FALSE
@@ -1720,14 +1792,265 @@ server <- function(input, output, session) {
     }
   )
   
-  # ==================== 词频分析模块（优化PDF导出）====================
+  # ==================== 词频分析模块 - 数据上传和处理（同步到其他模块）====================
   
+  # 存储上传的词频数据
+  freq_uploaded_data <- reactiveVal(NULL)
+  
+  # 处理上传的文件
+  observeEvent(input$freq_upload_file, {
+    req(input$freq_upload_file)
+    
+    tryCatch({
+      # 读取上传的Excel文件
+      uploaded <- read_excel(input$freq_upload_file$datapath, sheet = 1)
+      
+      # 检查必要的列
+      required_cols <- c("doc_id", "PY", "segmented_words", "word_count")
+      missing_cols <- required_cols[!required_cols %in% names(uploaded)]
+      
+      if (length(missing_cols) > 0) {
+        show_notification(paste("上传的文件缺少以下必要列:", 
+                                paste(missing_cols, collapse = ", ")), "error")
+        return()
+      }
+      
+      # 数据格式转换
+      uploaded <- uploaded %>%
+        mutate(
+          doc_id = as.character(doc_id),
+          PY = as.numeric(PY),
+          word_count = as.numeric(word_count),
+          # 将逗号分隔的字符串转换为列表
+          segmented_words = str_split(segmented_words, ",\\s*|;\\s*|\\s+")
+        ) %>%
+        filter(!is.na(PY), PY >= 1900, PY <= year(Sys.Date()), word_count > 0)
+      
+      freq_uploaded_data(uploaded)
+      rv$current_freq_data <- uploaded
+      
+      show_notification(paste("成功加载", nrow(uploaded), "条分词记录"), "success")
+      
+      # 自动刷新统计
+      delay(500, {
+        session$sendCustomMessage("refresh_freq", list())
+      })
+      
+    }, error = function(e) {
+      show_notification(paste("文件读取失败:", e$message), "error")
+      freq_uploaded_data(NULL)
+      rv$current_freq_data <- NULL
+    })
+  })
+  
+  # 获取当前词频分析的数据源
+  get_freq_data <- reactive({
+    if (input$freq_data_source == "upload") {
+      req(freq_uploaded_data())
+      return(freq_uploaded_data())
+    } else {
+      req(rv$segmented_data)
+      return(rv$segmented_data)
+    }
+  })
+  
+  # 更新词频统计数据并同步到其他模块
+  observeEvent(input$refresh_freq, {
+    data <- get_freq_data()
+    req(data)
+    
+    withProgress(message = '正在统计词频...', value = 0.5, {
+      
+      # 获取所有词汇
+      all_words <- unlist(data$segmented_words)
+      
+      if (length(all_words) == 0) {
+        show_notification("未找到任何词汇", "warning")
+        return()
+      }
+      
+      # 应用最小词长过滤
+      all_words <- all_words[nchar(all_words) >= input$min_word_length]
+      
+      # 停用词处理
+      stopwords_combined <- character(0)
+      
+      # 添加内置停用词
+      if (input$stopwords_lang == "中文") {
+        stopwords_combined <- c(stopwords_combined, 
+                                c("的", "和", "与", "及", "在", "是", "了", "对", "于", "中",
+                                  "地", "得", "有", "用", "以", "为", "并", "或", "等", "将",
+                                  "从", "到", "通过", "使用", "可以", "这种", "一个", "一种",
+                                  "包括", "具有", "进行", "研究", "分析", "基于", "方法", "数据",
+                                  "结果", "表明", "显示", "我们", "他们", "它们", "这些",
+                                  "那些", "这个", "那个"))
+      } else if (input$stopwords_lang == "英文") {
+        stopwords_combined <- c(stopwords_combined,
+                                c("the", "and", "for", "with", "this", "that", "from",
+                                  "were", "have", "been", "was", "are", "has", "had",
+                                  "will", "can", "may", "also", "than", "then", "thus"))
+      }
+      
+      # 添加自定义停用词
+      if (input$custom_stopwords != "") {
+        custom <- strsplit(input$custom_stopwords, ",")[[1]]
+        custom <- trimws(custom)
+        custom <- custom[custom != ""]
+        stopwords_combined <- c(stopwords_combined, custom)
+      }
+      
+      # 去除停用词
+      all_words <- all_words[!all_words %in% stopwords_combined]
+      
+      # 统计词频
+      word_freq <- tibble(word = all_words) %>%
+        count(word, sort = TRUE) %>%
+        mutate(
+          weight = log(n + 1),
+          rank = row_number()
+        ) %>%
+        filter(n >= input$min_freq)
+      
+      # 更新反应值 - 这些是其他模块依赖的数据
+      rv$word_freq <- word_freq
+      rv$current_freq_data <- data
+      
+      # 更新 keyword_trend 用于其他模块
+      rv$keyword_trend <- data %>%
+        select(doc_id, PY, segmented_words) %>%
+        unnest(segmented_words) %>%
+        rename(word = segmented_words) %>%
+        group_by(PY, word) %>%
+        summarise(count = n(), .groups = "drop")
+      
+      # 更新趋势指标用于气泡图
+      top_keywords <- rv$word_freq %>% 
+        top_n(30, n) %>% 
+        pull(word)
+      
+      rv$trend_metrics <- rv$keyword_trend %>%
+        filter(word %in% top_keywords) %>%
+        group_by(word) %>%
+        summarise(
+          total_count = sum(count),
+          mean_freq = mean(count),
+          trend = ifelse(n() > 2, cor(PY, count, method = "spearman"), 0),
+          first_active = min(PY[count > 0], na.rm = TRUE),
+          last_active = max(PY[count > 0], na.rm = TRUE)
+        ) %>%
+        mutate(
+          trend_category = case_when(
+            trend > 0.3 ~ "上升趋势",
+            trend < -0.3 ~ "下降趋势",
+            TRUE ~ "平稳趋势"
+          )
+        ) %>%
+        filter(!is.na(first_active), !is.na(last_active))
+      
+      # 更新时间趋势模块的关键词选择器
+      updateSelectizeInput(session, "trend_keywords", 
+                           choices = rv$word_freq$word,
+                           selected = head(rv$word_freq$word, 5))
+      
+      show_notification("词频统计完成！数据已同步到其他分析模块", "success")
+    })
+  })
+  
+  # 手动同步数据到其他模块的按钮
+  observeEvent(input$sync_to_other_modules, {
+    if (!is.null(rv$current_freq_data) && !is.null(rv$word_freq)) {
+      # 重新计算 keyword_trend
+      rv$keyword_trend <- rv$current_freq_data %>%
+        select(doc_id, PY, segmented_words) %>%
+        unnest(segmented_words) %>%
+        rename(word = segmented_words) %>%
+        group_by(PY, word) %>%
+        summarise(count = n(), .groups = "drop")
+      
+      # 重新计算趋势指标
+      top_keywords <- rv$word_freq %>% 
+        top_n(30, n) %>% 
+        pull(word)
+      
+      rv$trend_metrics <- rv$keyword_trend %>%
+        filter(word %in% top_keywords) %>%
+        group_by(word) %>%
+        summarise(
+          total_count = sum(count),
+          mean_freq = mean(count),
+          trend = ifelse(n() > 2, cor(PY, count, method = "spearman"), 0),
+          first_active = min(PY[count > 0], na.rm = TRUE),
+          last_active = max(PY[count > 0], na.rm = TRUE)
+        ) %>%
+        mutate(
+          trend_category = case_when(
+            trend > 0.3 ~ "上升趋势",
+            trend < -0.3 ~ "下降趋势",
+            TRUE ~ "平稳趋势"
+          )
+        ) %>%
+        filter(!is.na(first_active), !is.na(last_active))
+      
+      # 更新时间趋势模块的关键词选择器
+      updateSelectizeInput(session, "trend_keywords", 
+                           choices = rv$word_freq$word,
+                           selected = head(rv$word_freq$word, 5))
+      
+      show_notification("数据已成功同步到时间趋势、热力图、气泡图、词云图模块！", "success")
+    } else {
+      show_notification("请先刷新词频统计后再同步数据！", "warning")
+    }
+  })
+  
+  # 数据统计信息
+  output$freq_total_docs <- renderValueBox({
+    data <- get_freq_data()
+    valueBox(
+      nrow(data) %||% 0,
+      "文档总数",
+      icon = icon("file-alt"),
+      color = "blue"
+    )
+  })
+  
+  output$freq_total_words <- renderValueBox({
+    data <- get_freq_data()
+    total <- sum(data$word_count) %||% 0
+    valueBox(
+      total,
+      "总词汇数",
+      icon = icon("font"),
+      color = "green"
+    )
+  })
+  
+  output$freq_unique_words <- renderValueBox({
+    req(rv$word_freq)
+    valueBox(
+      nrow(rv$word_freq),
+      "唯一词汇数",
+      icon = icon("star"),
+      color = "yellow"
+    )
+  })
+  
+  output$freq_year_range <- renderValueBox({
+    data <- get_freq_data()
+    years <- range(data$PY, na.rm = TRUE)
+    valueBox(
+      paste(years[1], "-", years[2]),
+      "年份范围",
+      icon = icon("calendar"),
+      color = "purple"
+    )
+  })
+  
+  # 词频分布图
   output$freq_plot <- renderPlot({
     req(rv$word_freq)
     input$refresh_freq
     
     data <- rv$word_freq %>%
-      filter(n >= input$min_freq, nchar(word) >= input$min_word_length) %>%
       head(input$top_n_words)
     
     if (nrow(data) == 0) {
@@ -1751,38 +2074,76 @@ server <- function(input, output, session) {
     }
   })
   
+  # 高频词汇表
   output$freq_table <- renderDT({
     req(rv$word_freq)
+    
     datatable(
       rv$word_freq %>%
-        filter(n >= input$min_freq) %>%
-        head(100),
-      options = list(pageLength = 10, order = list(list(1, 'desc')))
-    )
+        head(500) %>%
+        mutate(
+          word = word,
+          n = n,
+          累计频率 = cumsum(n) / sum(n) * 100,
+          累计频率 = round(累计频率, 2)
+        ) %>%
+        rename(
+          "关键词" = word,
+          "频次" = n,
+          "累计频率(%)" = 累计频率
+        ),
+      options = list(
+        pageLength = 20,
+        order = list(list(1, 'desc')),
+        scrollX = TRUE
+      ),
+      rownames = FALSE
+    ) %>%
+      formatStyle(
+        "频次",
+        background = styleColorBar(rv$word_freq$n[1:500], "lightblue"),
+        backgroundSize = '100% 90%',
+        backgroundRepeat = 'no-repeat',
+        backgroundPosition = 'center'
+      )
   })
   
+  # 下载高频词汇表
   output$download_freq_data <- downloadHandler(
     filename = function() {
       paste0("高频词汇表_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".xlsx")
     },
     content = function(file) {
       req(rv$word_freq)
+      
       export_data <- rv$word_freq %>%
-        filter(n >= input$min_freq, nchar(word) >= input$min_word_length) %>%
-        head(input$top_n_words)
+        head(1000) %>%
+        mutate(
+          累计频率 = cumsum(n) / sum(n) * 100,
+          累计频率 = round(累计频率, 2)
+        ) %>%
+        rename(
+          词汇 = word,
+          频次 = n,
+          权重 = weight,
+          排名 = rank,
+          累计频率百分比 = 累计频率
+        )
+      
       write_xlsx(export_data, file)
       show_notification("高频词汇表导出成功！", "message")
     }
   )
   
+  # 下载词频分布图
   output$download_freq_plot <- downloadHandler(
     filename = function() {
       paste0("词频分布图_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".", input$freq_plot_format)
     },
     content = function(file) {
       req(rv$word_freq)
+      
       plot_data <- rv$word_freq %>%
-        filter(n >= input$min_freq, nchar(word) >= input$min_word_length) %>%
         head(input$top_n_words)
       
       p <- ggplot(plot_data, aes(x = reorder(word, n), y = n, fill = n)) +
@@ -1798,16 +2159,33 @@ server <- function(input, output, session) {
           legend.position = "none"
         )
       
+      # 根据格式保存
       if (input$freq_plot_format == "pdf") {
         ggsave(file, plot = p, device = cairo_pdf, width = 12, height = 8, dpi = 300, bg = "white")
+      } else if (input$freq_plot_format == "png") {
+        ggsave(file, plot = p, device = "png", width = 12, height = 8, dpi = 300, bg = "white")
       } else {
         ggsave(file, plot = p, device = "jpeg", width = 12, height = 8, dpi = 300, bg = "white")
       }
+      
       show_notification("词频分布图导出成功！", "message")
     }
   )
   
-  # ==================== 时间趋势模块（优化PDF导出）====================
+  # 重置上传数据当切换数据源时
+  observeEvent(input$freq_data_source, {
+    if (input$freq_data_source == "segment") {
+      # 切换回分词模块数据时，如果segmented_data存在，自动刷新统计
+      if (!is.null(rv$segmented_data)) {
+        rv$current_freq_data <- rv$segmented_data
+        delay(500, {
+          session$sendCustomMessage("refresh_freq", list())
+        })
+      }
+    }
+  })
+  
+  # ==================== 时间趋势模块 ====================
   
   output$trend_plot <- renderPlot({
     req(rv$keyword_trend)
@@ -1910,19 +2288,25 @@ server <- function(input, output, session) {
     }
   )
   
-  # ==================== 热力图模块（优化PDF导出）====================
+  # ==================== 7. 热力图模块（优化版，使用词内年度占比归一化）====================
   
   output$heatmap_plot <- renderPlot({
-    req(rv$keyword_trend)
+    req(rv$keyword_trend, rv$word_freq)
     input$plot_heatmap
     
     top_words <- rv$word_freq %>%
       head(input$heatmap_words) %>%
       pull(word)
     
+    # 1. 统一归一化逻辑：按词内年度占比（百分比）
     data <- rv$keyword_trend %>%
       filter(word %in% top_words) %>%
-      mutate(freq_scaled = scale(count)[, 1])
+      group_by(word) %>%
+      mutate(
+        year_total = sum(count),
+        freq_scaled = count / year_total * 100  # 使用百分比归一化
+      ) %>%
+      ungroup()
     
     if (nrow(data) == 0) {
       ggplot() + 
@@ -1932,187 +2316,494 @@ server <- function(input, output, session) {
       return()
     }
     
+    # 2. 配色方案
     colors <- switch(input$color_scale,
-                     "红-绿" = scale_fill_gradient2(low = "#2E8B57", mid = "#F5F5DC", high = "#8B0000"),
-                     "蓝-黄-红" = scale_fill_gradient2(low = "#313695", mid = "#FFFFBF", high = "#A50026"),
-                     "紫-黄" = scale_fill_gradient(low = "#FDE725", high = "#440154"))
+                     "red-green" = scale_fill_gradient2(low = "#2E8B57", mid = "#F5F5DC", high = "#8B0000", 
+                                                        name = "百分比 (%)"),
+                     "blue-yellow-red" = scale_fill_gradient2(low = "#313695", mid = "#FFFFBF", high = "#A50026",
+                                                              name = "百分比 (%)"),
+                     "purple-yellow" = scale_fill_gradient(low = "#FDE725", high = "#440154",
+                                                           name = "百分比 (%)"),
+                     "heat" = scale_fill_gradient(low = "#FFFFD9", high = "#B10026",
+                                                  name = "百分比 (%)"))
     
+    # 3. 基础绘图
     p <- ggplot(data, aes(x = PY, y = reorder(word, count), fill = freq_scaled)) +
       geom_tile(color = "white") +
       colors +
       labs(
-        title = "关键词时间分布热力图",
+        title = paste("关键词时间分布热力图 (Top", input$heatmap_words, ")"),
         x = "年份",
-        y = "关键词"
+        y = "关键词",
+        fill = "百分比 (%)"
       ) +
       theme_minimal(base_size = 12) +
       theme(
         plot.title = element_text(hjust = 0.5, face = "bold", size = 16, family = "FangSong"),
-        axis.text.x = element_text(angle = 45, hjust = 1, size = 9, family = "FangSong"),
-        axis.text.y = element_text(size = 9, family = "FangSong"),
-        axis.title = element_text(family = "FangSong", size = 11),
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 10, family = "FangSong"),
+        axis.text.y = element_text(size = 10, family = "FangSong"),
+        axis.title = element_text(family = "FangSong", size = 12, face = "bold"),
         legend.text = element_text(family = "FangSong", size = 9),
-        legend.title = element_text(family = "FangSong", size = 10)
+        legend.title = element_text(family = "FangSong", size = 10, face = "bold"),
+        legend.position = "right"
       ) +
       scale_x_continuous(breaks = pretty(data$PY, n = 8))
+    
+    # 4. 显示数值标签（如果勾选）
+    if (input$show_numbers) {
+      p <- p + geom_text(aes(label = ifelse(count > 0, sprintf("%.1f%%", freq_scaled), "")),
+                         size = 3, color = "black", alpha = 0.7, family = "FangSong")
+    }
+    
+    # 5. 行聚类（如果勾选）
+    if (input$cluster_rows) {
+      word_order <- data %>%
+        group_by(word) %>%
+        summarise(pattern = paste(count, collapse = "")) %>%
+        arrange(pattern) %>%
+        pull(word)
+      
+      p <- p + scale_y_discrete(limits = word_order)
+    }
     
     print(p)
   })
   
+  # 热力图导出函数（优化版）
   output$download_heatmap_plot <- downloadHandler(
     filename = function() {
       paste0("热力图_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".", input$heatmap_plot_format)
     },
     content = function(file) {
-      req(rv$keyword_trend)
+      req(rv$keyword_trend, rv$word_freq)
       
       top_words <- rv$word_freq %>%
         head(input$heatmap_words) %>%
         pull(word)
       
+      # 1. 统一归一化逻辑：按词内年度占比（百分比）
       plot_data <- rv$keyword_trend %>%
         filter(word %in% top_words) %>%
-        mutate(freq_scaled = scale(count)[, 1])
+        group_by(word) %>%
+        mutate(
+          year_total = sum(count),
+          freq_scaled = count / year_total * 100  # 和显示逻辑统一
+        ) %>%
+        ungroup()
       
+      # 2. 统一配色方案
       colors <- switch(input$color_scale,
-                       "红-绿" = scale_fill_gradient2(low = "#2E8B57", mid = "#F5F5DC", high = "#8B0000"),
-                       "蓝-黄-红" = scale_fill_gradient2(low = "#313695", mid = "#FFFFBF", high = "#A50026"),
-                       "紫-黄" = scale_fill_gradient(low = "#FDE725", high = "#440154"))
+                       "red-green" = scale_fill_gradient2(low = "#2E8B57", mid = "#F5F5DC", high = "#8B0000",
+                                                          name = "百分比 (%)"),
+                       "blue-yellow-red" = scale_fill_gradient2(low = "#313695", mid = "#FFFFBF", high = "#A50026",
+                                                                name = "百分比 (%)"),
+                       "purple-yellow" = scale_fill_gradient(low = "#FDE725", high = "#440154",
+                                                             name = "百分比 (%)"),
+                       "heat" = scale_fill_gradient(low = "#FFFFD9", high = "#B10026",
+                                                    name = "百分比 (%)"))
       
+      # 3. 统一绘图逻辑
       p <- ggplot(plot_data, aes(x = PY, y = reorder(word, count), fill = freq_scaled)) +
         geom_tile(color = "white") +
         colors +
         labs(
-          title = "关键词时间分布热力图",
+          title = paste("关键词时间分布热力图 (Top", input$heatmap_words, ")"),
           x = "年份",
-          y = "关键词"
+          y = "关键词",
+          fill = "百分比 (%)"
         ) +
         theme_minimal(base_size = 12) +
         theme(
           plot.title = element_text(hjust = 0.5, face = "bold", size = 16, family = "FangSong"),
-          axis.text.x = element_text(angle = 45, hjust = 1, size = 9, family = "FangSong"),
-          axis.text.y = element_text(size = 9, family = "FangSong"),
-          axis.title = element_text(family = "FangSong", size = 11),
+          axis.text.x = element_text(angle = 45, hjust = 1, size = 10, family = "FangSong"),
+          axis.text.y = element_text(size = 10, family = "FangSong"),
+          axis.title = element_text(family = "FangSong", size = 12, face = "bold"),
           legend.text = element_text(family = "FangSong", size = 9),
-          legend.title = element_text(family = "FangSong", size = 10)
+          legend.title = element_text(family = "FangSong", size = 10, face = "bold"),
+          legend.position = "right"
         ) +
         scale_x_continuous(breaks = pretty(plot_data$PY, n = 8))
       
+      # 4. 显示数值标签（如果勾选）
+      if (input$show_numbers) {
+        p <- p + geom_text(aes(label = ifelse(count > 0, sprintf("%.1f%%", freq_scaled), "")),
+                           size = 3, color = "black", alpha = 0.7, family = "FangSong")
+      }
+      
+      # 5. 行聚类（如果勾选）
+      if (input$cluster_rows) {
+        word_order <- plot_data %>%
+          group_by(word) %>%
+          summarise(pattern = paste(count, collapse = "")) %>%
+          arrange(pattern) %>%
+          pull(word)
+        
+        p <- p + scale_y_discrete(limits = word_order)
+      }
+      
+      # 6. 优化导出格式（PDF使用cairo_pdf避免中文乱码）
       if (input$heatmap_plot_format == "pdf") {
         ggsave(file, plot = p, device = cairo_pdf, width = 14, height = 10, dpi = 300, bg = "white")
+      } else if (input$heatmap_plot_format == "png") {
+        ggsave(file, plot = p, device = "png", width = 14, height = 10, dpi = 300, bg = "white")
       } else {
         ggsave(file, plot = p, device = "jpeg", width = 14, height = 10, dpi = 300, bg = "white")
       }
+      
       show_notification("热力图导出成功！", "message")
     }
   )
   
-  # ==================== 气泡图模块（优化PDF导出）====================
+  # ==================== 8. 气泡图模块 Server 逻辑（使用同步的数据）====================
   
+  # 气泡图数据处理函数
+  prepare_bubble_data <- reactive({
+    req(rv$word_freq, rv$keyword_trend)
+    
+    # 获取参数
+    top_n <- if(input$bubble_show_all) nrow(rv$word_freq) else input$bubble_top_n
+    min_freq <- input$bubble_min_freq
+    
+    # 选择高频关键词
+    top_keywords <- rv$word_freq %>%
+      filter(n >= min_freq) %>%
+      slice_max(n, n = top_n) %>%
+      pull(word)
+    
+    # 计算趋势指标
+    trend_metrics <- rv$keyword_trend %>%
+      filter(word %in% top_keywords) %>%
+      group_by(word) %>%
+      summarise(
+        total_count = sum(count),
+        mean_freq = mean(count, na.rm = TRUE),
+        max_freq = max(count, na.rm = TRUE),
+        # 计算Spearman相关系数衡量趋势
+        trend = ifelse(
+          n() > 2, 
+          suppressWarnings(cor(PY, count, use = "complete.obs", method = "spearman")), 
+          0
+        ),
+        # 首次出现年份
+        first_active = min(PY[count > 0], na.rm = TRUE),
+        # 最后出现年份
+        last_active = max(PY[count > 0], na.rm = TRUE),
+        # 活跃年限
+        active_years = last_active - first_active + 1,
+        # 频率标准差
+        freq_sd = sd(count, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      mutate(
+        # 趋势分类
+        trend_category = case_when(
+          trend > 0.3 ~ "上升趋势",
+          trend < -0.3 ~ "下降趋势",
+          TRUE ~ "平稳趋势"
+        ),
+        trend_strength = abs(trend),
+        # 变异系数
+        cv = ifelse(mean_freq > 0, freq_sd / mean_freq, 0)
+      ) %>%
+      filter(!is.na(first_active), !is.na(last_active))
+    
+    # 合并词频数据
+    bubble_data <- trend_metrics %>%
+      left_join(rv$word_freq, by = "word") %>%
+      filter(total_count >= input$bubble_min_total) %>%
+      arrange(desc(total_count))
+    
+    return(bubble_data)
+  })
+  
+  # 绘制气泡图
   output$bubble_plot <- renderPlot({
-    req(rv$trend_metrics)
+    req(rv$word_freq, rv$keyword_trend)
     input$plot_bubble
     
-    data <- rv$trend_metrics %>%
-      filter(total_count >= input$min_total_count)
+    bubble_data <- prepare_bubble_data()
     
-    if (nrow(data) == 0) {
+    if (nrow(bubble_data) == 0) {
       ggplot() + 
-        geom_text(aes(x = 1, y = 1, label = "无符合条件的关键词（可降低最小频次）"), 
-                  size = 10, family = "FangSong") + 
+        geom_text(aes(x = 1, y = 1, 
+                      label = "无符合条件的关键词（请降低最小频次或增加关键词数量）"), 
+                  size = 8, family = "FangSong") + 
         theme_void()
       return()
     }
     
-    p <- ggplot(data, aes(x = first_active, y = mean_freq, 
-                          size = total_count, color = trend_category)) +
-      geom_point(alpha = 0.7) +
-      geom_text_repel(aes(label = word), size = 3.5, family = "FangSong", max.overlaps = 15) +
-      scale_size_continuous(range = c(3, 15)) +
-      scale_color_manual(values = c("上升趋势" = "#E74C3C", 
-                                    "下降趋势" = "#3498DB", 
-                                    "平稳趋势" = "#2ECC71")) +
-      labs(
-        title = "关键词趋势气泡图",
-        x = "首次出现年份",
-        y = "平均频次",
-        size = "总频次",
-        color = "趋势类别"
+    # 设置颜色方案
+    trend_colors <- c(
+      "上升趋势" = "#E74C3C",  # 红色
+      "下降趋势" = "#3498DB",  # 蓝色
+      "平稳趋势" = "#2ECC71"   # 绿色
+    )
+    
+    # 计算X轴刻度
+    min_year <- floor(min(bubble_data$first_active))
+    max_year <- ceiling(max(bubble_data$first_active))
+    
+    # 根据用户选择设置X轴间隔
+    x_breaks <- if(input$bubble_x_axis == "auto") {
+      pretty(bubble_data$first_active, n = 8)
+    } else {
+      by_val <- as.numeric(input$bubble_x_axis)
+      seq(floor(min_year/by_val)*by_val, ceiling(max_year/by_val)*by_val, by = by_val)
+    }
+    
+    p <- ggplot(bubble_data,
+                aes(x = first_active, 
+                    y = mean_freq,
+                    size = total_count, 
+                    color = trend_category,
+                    alpha = trend_strength)) +
+      # 添加气泡
+      geom_point(shape = 16, alpha = input$bubble_alpha) +
+      # 添加关键词标签
+      geom_text_repel(
+        aes(label = word),
+        size = input$bubble_label_size,
+        max.overlaps = 20,
+        box.padding = 0.6,
+        point.padding = 0.3,
+        segment.color = "grey50",
+        segment.size = 0.3,
+        min.segment.length = 0.2,
+        force = 2,
+        fontface = "bold",
+        family = "FangSong"
       ) +
-      theme_minimal(base_size = 14) +
+      # 设置气泡大小
+      scale_size_continuous(
+        range = c(3, 15),
+        name = "总出现次数",
+        breaks = c(10, 50, 100, 200, 500, 1000),
+        labels = c("10", "50", "100", "200", "500", "1000+")
+      ) +
+      # 设置颜色
+      scale_color_manual(
+        values = trend_colors,
+        name = "趋势类别"
+      ) +
+      # 设置透明度
+      scale_alpha_continuous(
+        range = c(0.5, 1), 
+        guide = "none"
+      ) +
+      # 坐标轴设置
+      scale_x_continuous(
+        breaks = x_breaks,
+        limits = c(min_year - 1, max_year + 1),
+        expand = expansion(mult = c(0.02, 0.02))
+      ) +
+      scale_y_continuous(
+        labels = scales::percent_format(scale = 1, accuracy = 0.1),
+        breaks = scales::pretty_breaks(n = 8)
+      ) +
+      # 添加标题和标签
+      labs(
+        title = "文献关键词趋势分析气泡图",
+        subtitle = sprintf("基于分词数据分析（共%d个高频关键词）", nrow(bubble_data)),
+        x = "首次出现年份",
+        y = "平均相对频率 (%)",
+        caption = paste(
+          "气泡大小：关键词总出现次数\n",
+          "颜色：趋势方向（Spearman相关系数）\n",
+          "透明度：趋势强度\n",
+          "数据来源：", min(rv$keyword_trend$PY), "-", max(rv$keyword_trend$PY), "年 共", 
+          nrow(rv$current_freq_data %||% rv$segmented_data), "篇文献"
+        )
+      ) +
+      # 主题设置
+      theme_minimal(base_size = 14, base_family = "FangSong") +
       theme(
         plot.title = element_text(hjust = 0.5, face = "bold", size = 16, family = "FangSong"),
-        axis.text = element_text(family = "FangSong", size = 10),
-        axis.title = element_text(family = "FangSong", size = 12),
-        legend.text = element_text(family = "FangSong", size = 10),
-        legend.title = element_text(family = "FangSong", size = 11, face = "bold")
-      ) +
-      scale_x_continuous(breaks = pretty(data$first_active, n = 8))
+          axis.text.x = element_text(angle = 45, hjust = 1, size = 10, family = "FangSong"),
+          axis.text.y = element_text(size = 10, family = "FangSong"),
+          axis.title = element_text(family = "FangSong", size = 12, face = "bold"),
+          legend.text = element_text(family = "FangSong", size = 9),
+          legend.title = element_text(family = "FangSong", size = 10, face = "bold"),
+          legend.position = "right"
+      )
     
     print(p)
   })
   
-  output$trend_metrics_table <- renderDT({
+  # 显示趋势统计数据表
+  output$bubble_metrics_table <- renderDT({
     req(rv$trend_metrics)
-    datatable(rv$trend_metrics, options = list(pageLength = 10))
+    
+    bubble_data <- prepare_bubble_data()
+    
+    datatable(
+      bubble_data %>%
+        select(word, total_count, mean_freq, trend, trend_category, 
+               first_active, last_active, active_years) %>%
+        mutate(
+          mean_freq = round(mean_freq, 2),
+          trend = round(trend, 3)
+        ) %>%
+        rename(
+          "关键词" = word,
+          "总频次" = total_count,
+          "平均频率" = mean_freq,
+          "趋势系数" = trend,
+          "趋势类别" = trend_category,
+          "首次出现" = first_active,
+          "最后出现" = last_active,
+          "活跃年限" = active_years
+        ),
+      options = list(
+        pageLength = 10,
+        order = list(list(2, 'desc')),
+        scrollX = TRUE
+      ),
+      rownames = FALSE
+    )
   })
   
+  # 统计信息
+  output$bubble_stats <- renderPrint({
+    req(rv$trend_metrics)
+    
+    bubble_data <- prepare_bubble_data()
+    
+    cat("=== 气泡图统计信息 ===\n\n")
+    cat("总关键词数:", nrow(bubble_data), "\n")
+    cat("总出现频次:", sum(bubble_data$total_count), "\n\n")
+    
+    # 按趋势类别统计
+    cat("按趋势类别统计:\n")
+    trend_summary <- bubble_data %>%
+      group_by(trend_category) %>%
+      summarise(
+        关键词数量 = n(),
+        平均出现次数 = round(mean(total_count), 1),
+        平均趋势强度 = round(mean(trend_strength), 3),
+        平均首次出现年份 = round(mean(first_active), 1),
+        占比 = paste0(round(n()/nrow(bubble_data)*100, 1), "%")
+      )
+    
+    print(trend_summary)
+    
+    cat("\n上升趋势最强的关键词（Top 5）:\n")
+    rising <- bubble_data %>%
+      filter(trend_category == "上升趋势") %>%
+      arrange(desc(trend)) %>%
+      select(word, trend, total_count, first_active) %>%
+      head(5)
+    print(rising)
+    
+    cat("\n下降趋势最强的关键词（Top 5）:\n")
+    falling <- bubble_data %>%
+      filter(trend_category == "下降趋势") %>%
+      arrange(trend) %>%
+      select(word, trend, total_count, first_active) %>%
+      head(5)
+    print(falling)
+  })
+  
+  # 下载趋势统计数据
   output$download_trend_metrics <- downloadHandler(
     filename = function() {
       paste0("趋势统计数据_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".xlsx")
     },
     content = function(file) {
       req(rv$trend_metrics)
-      write_xlsx(rv$trend_metrics, file)
+      
+      bubble_data <- prepare_bubble_data() %>%
+        mutate(
+          mean_freq = round(mean_freq, 2),
+          trend = round(trend, 3)
+        )
+      
+      write_xlsx(bubble_data, file)
       show_notification("趋势统计数据导出成功！", "message")
     }
   )
   
+  # 下载气泡图
   output$download_bubble_plot <- downloadHandler(
     filename = function() {
       paste0("气泡图_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".", input$bubble_plot_format)
     },
     content = function(file) {
-      req(rv$trend_metrics)
+      req(rv$word_freq, rv$keyword_trend)
       
-      plot_data <- rv$trend_metrics %>%
-        filter(total_count >= input$min_total_count)
+      bubble_data <- prepare_bubble_data()
       
-      p <- ggplot(plot_data, aes(x = first_active, y = mean_freq, 
-                                 size = total_count, color = trend_category)) +
-        geom_point(alpha = 0.7) +
-        geom_text_repel(aes(label = word), size = 3.5, family = "FangSong", max.overlaps = 15) +
-        scale_size_continuous(range = c(3, 15)) +
-        scale_color_manual(values = c("上升趋势" = "#E74C3C", 
-                                      "下降趋势" = "#3498DB", 
-                                      "平稳趋势" = "#2ECC71")) +
-        labs(
-          title = "关键词趋势气泡图",
-          x = "首次出现年份",
-          y = "平均频次",
-          size = "总频次",
-          color = "趋势类别"
-        ) +
-        theme_minimal(base_size = 14) +
-        theme(
-          plot.title = element_text(hjust = 0.5, face = "bold", size = 16, family = "FangSong"),
-          axis.text = element_text(family = "FangSong", size = 10),
-          axis.title = element_text(family = "FangSong", size = 12),
-          legend.text = element_text(family = "FangSong", size = 10),
-          legend.title = element_text(family = "FangSong", size = 11, face = "bold")
-        ) +
-        scale_x_continuous(breaks = pretty(plot_data$first_active, n = 8))
+      trend_colors <- c(
+        "上升趋势" = "#E74C3C",
+        "下降趋势" = "#3498DB",
+        "平稳趋势" = "#2ECC71"
+      )
       
-      if (input$bubble_plot_format == "pdf") {
-        ggsave(file, plot = p, device = cairo_pdf, width = 12, height = 8, dpi = 300, bg = "white")
+      min_year <- floor(min(bubble_data$first_active))
+      max_year <- ceiling(max(bubble_data$first_active))
+      
+      x_breaks <- if(input$bubble_x_axis == "auto") {
+        pretty(bubble_data$first_active, n = 8)
       } else {
-        ggsave(file, plot = p, device = "jpeg", width = 12, height = 8, dpi = 300, bg = "white")
+        by_val <- as.numeric(input$bubble_x_axis)
+        seq(floor(min_year/by_val)*by_val, ceiling(max_year/by_val)*by_val, by = by_val)
       }
+      
+      p <- ggplot(bubble_data,
+                  aes(x = first_active, 
+                      y = mean_freq,
+                      size = total_count, 
+                      color = trend_category,
+                      alpha = trend_strength)) +
+        geom_point(shape = 16, alpha = input$bubble_alpha) +
+        geom_text_repel(
+          aes(label = word),
+          size = input$bubble_label_size,
+          max.overlaps = 20,
+          box.padding = 0.6,
+          point.padding = 0.3,
+          segment.color = "grey50",
+          segment.size = 0.3,
+          min.segment.length = 0.2,
+          force = 2,
+          fontface = "bold",
+          family = "FangSong"
+        ) +
+        scale_size_continuous(range = c(3, 15), name = "总出现次数") +
+        scale_color_manual(values = trend_colors, name = "趋势类别") +
+        scale_alpha_continuous(range = c(0.5, 1), guide = "none") +
+        scale_x_continuous(breaks = x_breaks, limits = c(min_year - 1, max_year + 1)) +
+        scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 0.1)) +
+        labs(
+          title = "文献关键词趋势分析气泡图",
+          subtitle = sprintf("基于分词数据分析（共%d个高频关键词）", nrow(bubble_data)),
+          x = "首次出现年份",
+          y = "平均相对频率 (%)",
+          caption = paste("数据来源：", min(rv$keyword_trend$PY), "-", max(rv$keyword_trend$PY), "年")
+        ) +
+        theme_minimal(base_family = "FangSong", base_size = 14) +
+        theme(
+          plot.title = element_text(hjust = 0.5, face = "bold", size = 18, family = "FangSong"),
+          plot.subtitle = element_text(hjust = 0.5, size = 12, color = "gray40", family = "FangSong"),
+          plot.caption = element_text(size = 10, color = "gray60", hjust = 0, family = "FangSong"),
+          legend.position = "right",
+          axis.text.x = element_text(angle = 45, hjust = 1, size = 11, family = "FangSong"),
+          axis.text.y = element_text(size = 11, family = "FangSong")
+        )
+      
+      # 根据格式保存
+      if (input$bubble_plot_format == "pdf") {
+        ggsave(file, plot = p, device = cairo_pdf, width = 14, height = 9, dpi = 300, bg = "white")
+      } else if (input$bubble_plot_format == "png") {
+        ggsave(file, plot = p, device = "png", width = 14, height = 9, dpi = 300, bg = "white")
+      } else {
+        ggsave(file, plot = p, device = "jpeg", width = 14, height = 9, dpi = 300, bg = "white")
+      }
+      
       show_notification("气泡图导出成功！", "message")
     }
   )
   
-  # ==================== 词云图模块（优化PDF导出）====================
+  # ==================== 9. 词云图模块（使用同步的数据）====================
   
   output$wordcloud_plot <- renderWordcloud2({
     req(rv$word_freq)
@@ -2553,6 +3244,8 @@ server <- function(input, output, session) {
     tagList(
       downloadButton("download_review_txt", "下载综述(TXT)", 
                      class = "btn-success", style = "width: 100%; margin-bottom: 5px;"),
+      downloadButton("download_review_docx", "下载综述(DOCX)", 
+                     class = "btn-info", style = "width: 100%; margin-bottom: 5px;"),
       downloadButton("download_review_refs", "下载参考文献", 
                      class = "btn-warning", style = "width: 100%;")
     )
