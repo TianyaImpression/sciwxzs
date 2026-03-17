@@ -1,17 +1,4 @@
 ```markdown
----
-output: github_document
----
-
-```{r, include = FALSE}
-knitr::opts_chunk$set(
-  collapse = TRUE,
-  comment = "#>",
-  fig.path = "man/figures/README-",
-  out.width = "100%"
-)
-
-```
 
 # sciwxzs: 基于 DeepSeek 的 SCI 文献智能分析与综述生成系统 🚀
 
@@ -41,8 +28,8 @@ knitr::opts_chunk$set(
 # 如果你尚未安装 remotes，请先运行：
 # install.packages("remotes")
 
-# 从 GitHub 安装 sciwxzs (请将下方替换为你的实际 GitHub 用户名)
-remotes::install_github("你的GitHub用户名/sciwxzs")
+# 从 GitHub 安装 sciwxzs 
+remotes::install_github("TianyaImpression/sciwxzs")
 
 ```
 
