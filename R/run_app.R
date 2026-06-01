@@ -285,8 +285,8 @@ ui <- dashboardPage(
                     helpText("请输入您的 DeepSeek API 密钥。密钥仅在当前会话中保存。"),
                     hr(),
                     selectInput("model", "选择模型:",
-                                choices = c("deepseek-chat", "deepseek-reasoner"),
-                                selected = "deepseek-chat")
+                                choices = c("deepseek-v4-flash", "deepseek-v4-pro"),
+                                selected = "deepseek-v4-flash")
                   ),
                   
                   # 自定义/本地大模型模式
@@ -838,7 +838,7 @@ server <- function(input, output, session) {
       api_key = rv$api_key %||% "",
       provider = provider,
       custom_url = if (provider == "custom") rv$custom_api_url else NULL,
-      model = if (provider == "custom") rv$custom_model else "deepseek-chat",
+      model = if (provider == "custom") rv$custom_model else "deepseek-v4-flash",
       max_tokens = 10,
       temperature = 0,
       timeout_sec = 15
@@ -896,7 +896,7 @@ server <- function(input, output, session) {
           <li><b>API 密钥获取：</b> 访问 <a href='https://platform.deepseek.com/' target='_blank'>DeepSeek 官网</a> 注册获取</li>
           <li><b>密钥格式：</b> 以 <code>sk-</code> 开头</li>
           <li><b>安全性：</b> 密钥仅保存在当前会话内存中，不会存储到磁盘</li>
-          <li><b>模型选择：</b> deepseek-chat 适合翻译和分词，deepseek-reasoner 适合综述和技术分析</li>
+          <li><b>模型选择：</b> deepseek-v4-flash 适合翻译和分词，deepseek-v4-pro 适合综述和技术分析</li>
         </ul>
         <h4>模块使用说明</h4>
         <ul>
@@ -1508,7 +1508,7 @@ server <- function(input, output, session) {
         api_key = if (provider == "custom") (rv$api_key %||% "") else rv$api_key,
         provider = provider,
         custom_url = if (provider == "custom") rv$custom_api_url else NULL,
-        model = if (provider == "custom") rv$custom_model else (input$model %||% "deepseek-chat"),
+        model = if (provider == "custom") rv$custom_model else (input$model %||% "deepseek-v4-flash"),
         max_tokens = max_tokens,
         timeout_sec = input$timeout %||% 30
       )
@@ -1739,7 +1739,7 @@ server <- function(input, output, session) {
           custom_url = if (provider == "custom") rv$custom_api_url else NULL,
           doc_id = doc_id,
           max_tokens = input$max_tokens,
-          model = if (provider == "custom") rv$custom_model else (input$model %||% "deepseek-chat"),
+          model = if (provider == "custom") rv$custom_model else (input$model %||% "deepseek-v4-flash"),
           timeout_sec = input$timeout
         )
         
@@ -3221,7 +3221,7 @@ server <- function(input, output, session) {
         api_key = if (provider == "custom") (rv$api_key %||% "") else rv$api_key,
         provider = provider,
         custom_url = if (provider == "custom") rv$custom_api_url else NULL,
-        model = if (provider == "custom") rv$custom_model else "deepseek-chat",
+        model = if (provider == "custom") rv$custom_model else "deepseek-v4-flash",
         max_tokens = 4000,
         temperature = 0.7,
         timeout_sec = 120
