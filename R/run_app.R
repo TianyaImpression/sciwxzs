@@ -1,6 +1,6 @@
-#' 运行 DeepSeek 文献综合分析与翻译系统
+#' 运行 AI 文献综合分析与翻译系统
 #'
-#' @description 启动 sciwxzs 包的交互式 Shiny 应用程序。
+#' @description 启动 sciwxzs 包的交互式 Shiny 应用程序。支持 DeepSeek V4 和用户自定义 OpenAI 兼容 API（包括本地大模型）。
 #'
 #' @import shiny
 #' @import shinydashboard
@@ -265,44 +265,56 @@ ui <- dashboardPage(
       tabItem(tabName = "api",
               fluidRow(
                 box(
-                  title = "DeepSeek API配置", status = "warning", solidHeader = TRUE, width = 6,
-                  passwordInput("api_key_config", "API密钥:", value = "",
-                                placeholder = "输入sk-开头的DeepSeek API密钥"),
-                  helpText("请输入您的DeepSeek API密钥。密钥仅在当前会话中保存，所有模块将共用此密钥。"),
+                  title = "AI API 配置", status = "warning", solidHeader = TRUE, width = 6,
+                  
+                  # 提供商选择
+                  radioButtons("api_provider", "API 提供商:",
+                               choices = list(
+                                 "DeepSeek API" = "deepseek",
+                                 "自定义/本地大模型 (OpenAI兼容)" = "custom"
+                               ),
+                               selected = "deepseek",
+                               inline = FALSE),
                   hr(),
-                  selectInput("model", "选择模型:", 
-                              choices = c("deepseek-chat", "deepseek-reasoner"),
-                              selected = "deepseek-chat"),
-                  numericInput("timeout", "请求超时(秒):", 30, min = 10, max = 120),
-                  actionButton("save_api_key", "保存API密钥", class = "btn-success", style = "width: 100%;"),
+                  
+                  # DeepSeek 模式
+                  conditionalPanel(
+                    condition = "input.api_provider == 'deepseek'",
+                    passwordInput("api_key_config", "API 密钥:",
+                                  placeholder = "输入 sk- 开头的 DeepSeek API 密钥"),
+                    helpText("请输入您的 DeepSeek API 密钥。密钥仅在当前会话中保存。"),
+                    hr(),
+                    selectInput("model", "选择模型:",
+                                choices = c("deepseek-chat", "deepseek-reasoner"),
+                                selected = "deepseek-chat")
+                  ),
+                  
+                  # 自定义/本地大模型模式
+                  conditionalPanel(
+                    condition = "input.api_provider == 'custom'",
+                    textInput("custom_api_url", "API 端点地址:",
+                              placeholder = "例如：http://localhost:11434/v1"),
+                    helpText("输入本地或自定义大模型的 API 端点地址。支持 OpenAI 兼容接口。"),
+                    textInput("custom_model", "模型标识符:",
+                              placeholder = "例如：qwen2.5:7b 或 llama3:8b"),
+                    helpText("输入模型名称或标识符，如 Ollama 模型名、vLLM 部署的模型名等。"),
+                    hr(),
+                    passwordInput("custom_api_key", "API 密钥（可选）:",
+                                  placeholder = "本地模型通常无需密钥，留空即可"),
+                    helpText("如果您的自定义服务需要认证，请在此输入密钥。大多数本地模型不需要。")
+                  ),
+                  
+                  hr(),
+                  numericInput("timeout", "请求超时(秒):", 30, min = 10, max = 300),
+                  actionButton("save_api_key", "保存配置", class = "btn-success", style = "width: 100%;"),
                   actionButton("test_api", "测试连接", class = "btn-info", style = "width: 100%; margin-top: 10px;"),
                   hr(),
-                  h4("API状态"),
+                  h4("API 状态"),
                   uiOutput("api_status_detailed")
                 ),
                 box(
                   title = "使用说明", status = "info", solidHeader = TRUE, width = 6,
-                  HTML("
-        <h4>API配置说明</h4>
-        <ul>
-          <li><b>API密钥获取：</b> 访问 <a href='https://platform.deepseek.com/' target='_blank'>DeepSeek官网</a> 注册获取</li>
-          <li><b>密钥格式：</b> 以 <code>sk-</code> 开头</li>
-          <li><b>安全性：</b> 密钥仅保存在当前会话内存中，不会存储到磁盘</li>
-          <li><b>模型选择：</b> deepseek-chat 适合翻译和分词，deepseek-reasoner 适合综述、技术分析</li>
-        </ul>
-        <h4>模块使用说明</h4>
-        <ul>
-          <li><b>摘要翻译：</b> 使用配置的API密钥进行批量翻译</li>
-          <li><b>分词处理：</b> 使用API进行中文分词</li>
-          <li><b>文献综述：</b> 基于API生成学术综述</li>
-        </ul>
-        <h4>数据要求</h4>
-        <ul>
-          <li>ABCN列必须包含中文文本（用于分词分析）</li>
-          <li>AB列必须包含英文摘要（用于翻译）</li>
-          <li>PY列必须为有效年份(1900-当前)</li>
-        </ul>
-      ")
+                  uiOutput("api_help_text")
                 )
               )
       ),
@@ -722,6 +734,9 @@ server <- function(input, output, session) {
     # API配置
     api_key = NULL,                     # 全局API密钥
     api_valid = FALSE,                   # API是否有效
+    api_provider = "deepseek",          # API提供商: deepseek/custom
+    custom_api_url = NULL,              # 自定义API URL
+    custom_model = NULL,                # 自定义模型名称
     
     # 检索模块数据
     raw_data_search = NULL,
@@ -768,94 +783,98 @@ server <- function(input, output, session) {
   # ========== API配置模块：保存和验证API密钥 ==========
   
   # 保存API密钥
+  # 保存API密钥
   observeEvent(input$save_api_key, {
-    api_key <- trimws(input$api_key_config)
+    provider <- input$api_provider %||% "deepseek"
     
-    if (api_key == "") {
-      show_notification("请输入API密钥！", "warning")
-      rv$api_valid <- FALSE
-      return()
+    if (identical(provider, "deepseek")) {
+      api_key <- trimws(input$api_key_config)
+      if (api_key == "") {
+        show_notification("请输入 API 密钥！", "warning")
+        rv$api_valid <- FALSE
+        return()
+      }
+      rv$api_key <- api_key
+    } else if (identical(provider, "custom")) {
+      custom_url <- trimws(input$custom_api_url)
+      if (custom_url == "") {
+        show_notification("自定义 API 模式下请输入 API 端点地址！", "warning")
+        rv$api_valid <- FALSE
+        return()
+      }
+      custom_model <- trimws(input$custom_model)
+      if (custom_model == "") {
+        show_notification("自定义 API 模式下请输入模型标识符！", "warning")
+        rv$api_valid <- FALSE
+        return()
+      }
+      # 自定义模式下密钥可选
+      custom_key <- trimws(input$custom_api_key)
+      rv$api_key <- if (nzchar(custom_key)) custom_key else ""
+      rv$custom_api_url <- custom_url
+      rv$custom_model <- custom_model
     }
     
-    if (!grepl("^sk-", api_key)) {
-      show_notification("API密钥格式错误：应以'sk-'开头！", "error")
-      rv$api_valid <- FALSE
-      return()
-    }
-    
-    rv$api_key <- api_key
+    rv$api_provider <- provider
     rv$api_valid <- TRUE
-    show_notification("API密钥已保存！", "message")
+    show_notification("API 配置已保存！", "message")
   })
-  
+  # 测试API连接
   # 测试API连接
   observeEvent(input$test_api, {
-    if (is.null(rv$api_key)) {
-      show_notification("请先保存API密钥！", "warning")
+    if (!rv$api_valid) {
+      show_notification("请先保存 API 配置！", "warning")
       return()
     }
     
     rv$api_test_result <- "正在测试连接..."
     
-    # 简单的测试调用
-    test_result <- tryCatch({
-      api_url <- "https://api.deepseek.com/chat/completions"
-      
-      request_body <- list(
-        model = "deepseek-chat",
-        messages = list(
-          list(role = "user", content = "Hello")
-        ),
-        max_tokens = 5
-      )
-      
-      headers <- add_headers(
-        "Authorization" = paste("Bearer", rv$api_key),
-        "Content-Type" = "application/json"
-      )
-      
-      response <- POST(
-        url = api_url,
-        headers,
-        body = toJSON(request_body, auto_unbox = TRUE),
-        timeout(10)
-      )
-      
-      if (status_code(response) == 200) {
-        "连接成功！API密钥有效。"
-      } else {
-        paste("连接失败：HTTP", status_code(response))
-      }
-    }, error = function(e) {
-      paste("连接错误：", e$message)
-    })
+    provider <- rv$api_provider %||% "deepseek"
     
-    rv$api_test_result <- test_result
-    rv$api_valid <- grepl("成功", test_result)
+    test_result <- call_ai_api(
+      messages = list(
+        list(role = "user", content = "Hello, this is a test.")
+      ),
+      api_key = rv$api_key %||% "",
+      provider = provider,
+      custom_url = if (provider == "custom") rv$custom_api_url else NULL,
+      model = if (provider == "custom") rv$custom_model else "deepseek-chat",
+      max_tokens = 10,
+      temperature = 0,
+      timeout_sec = 15
+    )
     
-    if (rv$api_valid) {
-      show_notification("API连接测试成功！", "success")
+    if (grepl("^失败", test_result)) {
+      rv$api_test_result <- test_result
+      rv$api_valid <- FALSE
+      show_notification("API 连接测试失败，请检查配置和网络", "error")
     } else {
-      show_notification("API连接测试失败，请检查密钥和网络", "error")
+      rv$api_test_result <- paste("连接成功！", substr(test_result, 1, 50))
+      rv$api_valid <- TRUE
+      show_notification("API 连接测试成功！", "message")
     }
   })
-  
+  # 显示API状态（详细版）
   # 显示API状态（详细版）
   output$api_status_detailed <- renderUI({
-    if (is.null(rv$api_key)) {
+    provider <- rv$api_provider %||% "deepseek"
+    provider_label <- if (provider == "deepseek") "DeepSeek" else "自定义/本地"
+    
+    if (is.null(rv$api_key) && provider == "deepseek") {
       div(class = "api-status-box",
-          h5("API状态：", span("未配置", class = "api-status-invalid")),
-          p("请在上方输入并保存您的DeepSeek API密钥")
+          h5("API 状态：", span("未配置", class = "api-status-invalid")),
+          p("请在上方输入并保存您的 API 密钥")
       )
     } else if (!rv$api_valid) {
       div(class = "api-status-box",
-          h5("API状态：", span("无效", class = "api-status-invalid")),
-          p("密钥格式可能不正确或已失效，请重新配置")
+          h5("API 状态：", span("无效", class = "api-status-invalid")),
+          p("配置可能不正确或已失效，请重新配置")
       )
     } else {
       div(class = "api-status-box",
-          h5("API状态：", span("已配置并有效 ✓", class = "api-status-valid")),
-          p("模型：", input$model),
+          h5("API 状态：", span("已配置并有效 \u2713", class = "api-status-valid")),
+          p("提供商：", provider_label),
+          p("模型：", if (provider == "custom") rv$custom_model else input$model),
           p("超时：", input$timeout, "秒"),
           p("最后测试：", if (!is.null(rv$api_test_result) && !grepl("测试", rv$api_test_result)) {
             format(Sys.time(), "%H:%M:%S")
@@ -867,6 +886,57 @@ server <- function(input, output, session) {
     }
   })
   
+
+  # API 使用说明（动态切换）
+  output$api_help_text <- renderUI({
+    if (input$api_provider == "deepseek") {
+      HTML("
+        <h4>DeepSeek API 配置说明</h4>
+        <ul>
+          <li><b>API 密钥获取：</b> 访问 <a href='https://platform.deepseek.com/' target='_blank'>DeepSeek 官网</a> 注册获取</li>
+          <li><b>密钥格式：</b> 以 <code>sk-</code> 开头</li>
+          <li><b>安全性：</b> 密钥仅保存在当前会话内存中，不会存储到磁盘</li>
+          <li><b>模型选择：</b> deepseek-chat 适合翻译和分词，deepseek-reasoner 适合综述和技术分析</li>
+        </ul>
+        <h4>模块使用说明</h4>
+        <ul>
+          <li><b>摘要翻译：</b> 使用配置的 API 进行批量翻译</li>
+          <li><b>分词处理：</b> 使用 API 进行中文分词</li>
+          <li><b>文献综述：</b> 基于 API 生成学术综述</li>
+        </ul>
+      ")
+    } else {
+      HTML("
+        <h4>自定义/本地大模型配置说明</h4>
+        <ul>
+          <li><b>API 端点地址：</b> 输入本地或远程大模型服务的 OpenAI 兼容接口地址</li>
+          <li><b>常见示例：</b>
+            <ul>
+              <li>Ollama: <code>http://localhost:11434/v1</code></li>
+              <li>vLLM: <code>http://localhost:8000/v1</code></li>
+              <li>LM Studio: <code>http://localhost:1234/v1</code></li>
+              <li>Open WebUI: <code>http://localhost:3000/api</code></li>
+            </ul>
+          </li>
+          <li><b>模型标识符：</b> 填写对应的模型名称，如 <code>qwen2.5:7b</code>、<code>llama3:8b</code>、<code>deepseek-r1:8b</code> 等</li>
+          <li><b>API 密钥：</b> 大多数本地模型不需要密钥，留空即可</li>
+          <li><b>安全性：</b> 配置仅保存在当前会话内存中</li>
+        </ul>
+        <h4>模块使用说明</h4>
+        <ul>
+          <li><b>摘要翻译：</b> 使用配置的本地模型进行批量翻译</li>
+          <li><b>分词处理：</b> 使用本地模型进行中文分词</li>
+          <li><b>文献综述：</b> 基于本地模型生成学术综述</li>
+        </ul>
+        <h4>数据要求</h4>
+        <ul>
+          <li>ABCN 列必须包含中文文本（用于分词分析）</li>
+          <li>AB 列必须包含英文摘要（用于翻译）</li>
+          <li>PY 列必须为有效年份 (1900-当前)</li>
+        </ul>
+      ")
+    }
+  })
   # API状态指示器 - 翻译模块
   output$api_status_indicator_translate <- renderUI({
     if (is.null(rv$api_key)) {
@@ -1431,10 +1501,16 @@ server <- function(input, output, session) {
       }
       
       # 调用翻译函数
+      # 调用翻译函数
+      provider <- rv$api_provider %||% "deepseek"
       translations[i] <- translate_with_deepseek(
         text = current_ab,
-        api_key = rv$api_key,
-        max_tokens = max_tokens
+        api_key = if (provider == "custom") (rv$api_key %||% "") else rv$api_key,
+        provider = provider,
+        custom_url = if (provider == "custom") rv$custom_api_url else NULL,
+        model = if (provider == "custom") rv$custom_model else (input$model %||% "deepseek-chat"),
+        max_tokens = max_tokens,
+        timeout_sec = input$timeout %||% 30
       )
       
       # 实时更新translated_processed_data中的ABCN列
@@ -1655,12 +1731,15 @@ server <- function(input, output, session) {
         incProgress(1/total, detail = paste("处理第", i, "篇文献"))
         updateProgressBar(session, "segment_progress", value = progress_pct)
         
+        provider <- rv$api_provider %||% "deepseek"
         result <- segment_chinese_with_deepseek(
-          text, 
-          rv$api_key,  # 使用全局API密钥
-          doc_id,
+          text = text,
+          api_key = if (provider == "custom") (rv$api_key %||% "") else rv$api_key,
+          provider = provider,
+          custom_url = if (provider == "custom") rv$custom_api_url else NULL,
+          doc_id = doc_id,
           max_tokens = input$max_tokens,
-          model = input$model,
+          model = if (provider == "custom") rv$custom_model else (input$model %||% "deepseek-chat"),
           timeout_sec = input$timeout
         )
         
@@ -3127,67 +3206,49 @@ server <- function(input, output, session) {
     )
     
     # API调用
-    rv$review_progress_log <- paste(rv$review_progress_log, "正在调用DeepSeek API...\n")
+    # API调用
+    provider <- rv$api_provider %||% "deepseek"
+    rv$review_progress_log <- paste(rv$review_progress_log, 
+                                    sprintf("正在调用 %s API...\n", 
+                                            if (provider == "deepseek") "DeepSeek" else "自定义"))
     
-    tryCatch({
-      api_url <- "https://api.deepseek.com/chat/completions"
-      
-      request_body <- list(
-        model = "deepseek-chat",
+    withProgress(message = '正在生成综述...', value = 0.5, {
+      full_response <- call_ai_api(
         messages = list(
           list(role = "system", content = system_prompt),
           list(role = "user", content = user_prompt)
         ),
+        api_key = if (provider == "custom") (rv$api_key %||% "") else rv$api_key,
+        provider = provider,
+        custom_url = if (provider == "custom") rv$custom_api_url else NULL,
+        model = if (provider == "custom") rv$custom_model else "deepseek-chat",
         max_tokens = 4000,
-        temperature = 0.7
+        temperature = 0.7,
+        timeout_sec = 120
       )
+    })
+    
+    if (grepl("^失败", full_response)) {
+      rv$review_progress_log <- paste(rv$review_progress_log, 
+                                      sprintf("\u274c API 调用失败: %s\n", full_response))
+      show_notification("API 调用失败，请检查配置和网络", "error")
+    } else {
+      # 分离综述内容和参考文献
+      parts <- strsplit(full_response, "参考文献|References", fixed = FALSE)[[1]]
       
-      headers <- add_headers(
-        "Authorization" = paste("Bearer", rv$api_key),  # 使用全局API密钥
-        "Content-Type" = "application/json"
-      )
-      
-      withProgress(message = '正在生成综述...', value = 0.5, {
-        response <- POST(
-          url = api_url,
-          headers,
-          body = toJSON(request_body, auto_unbox = TRUE),
-          timeout(120)
-        )
-      })
-      
-      if (status_code(response) == 200) {
-        content <- content(response, "parsed")
-        full_response <- content$choices[[1]]$message$content
-        
-        # 分离综述内容和参考文献
-        parts <- strsplit(full_response, "参考文献|References", fixed = FALSE)[[1]]
-        
-        if (length(parts) >= 2) {
-          rv$review_result <- parts[1]
-          rv$reference_list <- parts[2]
-        } else {
-          rv$review_result <- full_response
-          rv$reference_list <- "无独立参考文献列表"
-        }
-        
-        rv$review_progress_log <- paste(rv$review_progress_log, 
-                                        sprintf("✅ 综述生成成功！共处理%d篇文献。\n", nrow(review_data)))
-        
-        show_notification("文献综述生成完成！", "message")
+      if (length(parts) >= 2) {
+        rv$review_result <- parts[1]
+        rv$reference_list <- parts[2]
       } else {
-        error_msg <- content(response, "text")
-        rv$review_progress_log <- paste(rv$review_progress_log, 
-                                        sprintf("❌ API调用失败: HTTP %d - %s\n", 
-                                                status_code(response), error_msg))
-        show_notification("API调用失败，请检查密钥和网络", "error")
+        rv$review_result <- full_response
+        rv$reference_list <- "无独立参考文献列表"
       }
       
-    }, error = function(e) {
       rv$review_progress_log <- paste(rv$review_progress_log, 
-                                      sprintf("❌ 生成过程出错: %s\n", e$message))
-      show_notification(paste("生成失败:", e$message), "error")
-    })
+                                      sprintf("\u2705 综述生成成功！共处理 %d 篇文献。\n", nrow(review_data)))
+      
+      show_notification("文献综述生成完成！", "message")
+    }
     
     rv$is_review_generating <- FALSE
   })

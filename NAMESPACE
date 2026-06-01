@@ -2,6 +2,7 @@
 
 export("%>%")
 export("%||%")
+export(call_ai_api)
 export(init_sciwxzs_fonts)
 export(run_sciwxzs)
 export(segment_chinese_with_deepseek)
