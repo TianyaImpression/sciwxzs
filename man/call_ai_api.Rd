@@ -6,7 +6,7 @@
 \usage{
 call_ai_api(
   messages,
-  api_key,
+  api_key = "",
   provider = "deepseek",
   custom_url = NULL,
   model = NULL,
@@ -19,7 +19,7 @@ call_ai_api(
 \arguments{
 \item{messages}{消息列表，每项包含 role 和 content}
 
-\item{api_key}{API 密钥}
+\item{api_key}{API 密钥（DeepSeek 必填，自定义/本地可选）}
 
 \item{provider}{API 提供商类型，"deepseek" 或 "custom"}
 
@@ -40,17 +40,5 @@ call_ai_api(
 }
 \description{
 支持 DeepSeek V4 和用户自定义 OpenAI 兼容 API 的统一调用接口。
-统一处理 API 端点、认证头、请求体构建和错误处理。
-}
-\examples{
-\dontrun{
-call_ai_api(
-  messages = list(
-    list(role = "user", content = "Hello")
-  ),
-  api_key = "sk-xxxx",
-  provider = "deepseek",
-  max_tokens = 50
-)
-}
+  本地大模型无需 API 密钥，传入空字符串即可。
 }

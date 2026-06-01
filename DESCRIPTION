@@ -25,6 +25,7 @@ Imports:
     purrr,
     readr,
     readxl,
+    RColorBrewer,
     rlang,
     scales,
     shiny,
