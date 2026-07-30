@@ -140,7 +140,17 @@ call_ai_api <- function(messages,
 
     if (httr::status_code(response) == 200) {
       content <- httr::content(response, "parsed")
-      return(content$choices[[1]]$message$content)
+      result <- content$choices[[1]]$message$content
+      # 将 token 用量信息附加为属性，调用方可透过 attr(, "usage") 获取
+      if (!is.null(content$usage)) {
+        usage <- list(
+          prompt_tokens     = content$usage$prompt_tokens     %||% 0,
+          completion_tokens = content$usage$completion_tokens %||% 0,
+          total_tokens      = content$usage$total_tokens      %||% 0
+        )
+        attr(result, "usage") <- usage
+      }
+      return(result)
     } else {
       error_body <- tryCatch(
         httr::content(response, "text"),
@@ -198,11 +208,16 @@ translate_with_deepseek <- function(text,
     timeout_sec = timeout_sec
   )
 
+  # 提取并保留 token 用量属性
+  usage_attr <- attr(result, "usage")
+
   if (grepl("^失败", result)) {
     return(result)
   }
 
-  trimws(gsub("^翻译[:：]\\s*", "", result))
+  result <- trimws(gsub("^翻译[:：]\\s*", "", result))
+  attr(result, "usage") <- usage_attr
+  result
 }
 
 #' 使用 AI API 进行中文分词
@@ -263,6 +278,9 @@ segment_chinese_with_deepseek <- function(text,
     response_format = list(type = "text")
   )
 
+  # 提取并保留 token 用量属性
+  usage_attr <- attr(result, "usage")
+
   if (grepl("^失败", result)) {
     return(list(words = character(0), success = FALSE, error = result))
   }
@@ -279,6 +297,6 @@ segment_chinese_with_deepseek <- function(text,
                         "那些", "这个", "那个")
   words <- words[!words %in% stopwords_custom]
 
-  list(words = words, success = TRUE)
+  list(words = words, success = TRUE, usage = usage_attr)
 }
 

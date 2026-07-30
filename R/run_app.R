@@ -35,6 +35,13 @@ run_sciwxzs <- function() {
   }, error = function(e) {
     warning("字体加载失败，PDF 图表可能无法正确显示中文字体。您可以尝试运行 init_sciwxzs_fonts()。")
   })
+
+  # ========== 运行日志初始化（外层，在 shinyApp 启动前执行） ==========
+  # 使用绝对路径确保日志文件位置明确
+  log_env <- init_sciwxzs_logger(
+    log_file = file.path(normalizePath(getwd()), "sciwxzs_log")
+  )
+
   # ==========================================
   # 1. UI 定义
   # ==========================================
@@ -779,7 +786,33 @@ server <- function(input, output, session) {
     type <- ifelse(type %in% valid_types, type, "message")
     showNotification(message, type = type, duration = 3)
   }
-  
+
+  # ========== 运行日志：会话级设置 ==========
+  # 注：log_env 已在 run_sciwxzs() 外层创建，此处直接捕获使用
+
+  # 会话结束时写入最终日志
+  session$onSessionEnded(function() {
+    write_sciwxzs_log(log_env)
+  })
+
+  # 应用停止时也写入（比 onSessionEnded 更可靠）
+  onStop(function() {
+    write_sciwxzs_log(log_env)
+  })
+
+  # 每 30 秒自动保存一次日志，确保实时更新
+  observe({
+    invalidateLater(30000, session)
+    write_sciwxzs_log(log_env)
+  })
+
+  # 响应式追踪文献数量：无论通过哪种方式加载数据，都自动更新
+  observe({
+    req(rv$processed_data)
+    log_paper_count(log_env, nrow(rv$processed_data))
+    write_sciwxzs_log(log_env)
+  })
+
   # ========== API配置模块：保存和验证API密钥 ==========
   
   # 保存API密钥
@@ -1094,6 +1127,10 @@ server <- function(input, output, session) {
           mutate(ABCN = NA_character_)  # 清空ABCN，等待翻译后填充
       }
     }
+
+    # 更新日志：记录数据上传功能（文献数量由响应式观察器自动追踪）
+    log_feature_use(log_env, "data_upload")
+    write_sciwxzs_log(log_env)
   })
   
   # 数据预览
@@ -1366,7 +1403,11 @@ server <- function(input, output, session) {
         rv$translated_processed_data <- processed_df
         
         show_notification(paste("成功加载数据：共", nrow(raw_data), "条记录"), "message")
-        
+
+        # 更新日志
+        log_feature_use(log_env, "data_upload")
+        write_sciwxzs_log(log_env)
+
       }, error = function(e) {
         show_notification(paste("读取文件出错：", e$message), "error")
         rv$raw_data_trans <- NULL
@@ -1405,12 +1446,16 @@ server <- function(input, output, session) {
   
   # 核心翻译逻辑 - 修复版本
   observeEvent(input$run_translate, {
+    # 每次点击即记录日志（无论是否成功）
+    log_feature_use(log_env, "translation")
+    write_sciwxzs_log(log_env)
+
     # 检查API密钥
     if (is.null(rv$api_key) || !rv$api_valid) {
       show_notification("请先在API配置页面设置有效的API密钥！", "error")
       return()
     }
-    
+
     translation_data <- get_translation_data()
     if (is.null(translation_data)) {
       show_notification("没有可翻译的数据，请先上传文件或进行检索筛选", "warning")
@@ -1501,9 +1546,8 @@ server <- function(input, output, session) {
       }
       
       # 调用翻译函数
-      # 调用翻译函数
       provider <- rv$api_provider %||% "deepseek"
-      translations[i] <- translate_with_deepseek(
+      trans_result <- translate_with_deepseek(
         text = current_ab,
         api_key = if (provider == "custom") (rv$api_key %||% "") else rv$api_key,
         provider = provider,
@@ -1512,6 +1556,13 @@ server <- function(input, output, session) {
         max_tokens = max_tokens,
         timeout_sec = input$timeout %||% 30
       )
+
+      # 记录 token 消耗
+      usage <- attr(trans_result, "usage")
+      if (!is.null(usage)) {
+        log_tokens(log_env, "translation", usage$prompt_tokens, usage$completion_tokens)
+      }
+      translations[i] <- trans_result
       
       # 实时更新translated_processed_data中的ABCN列
       if (!is.null(rv$translated_processed_data) && i <= nrow(rv$translated_processed_data)) {
@@ -1642,6 +1693,8 @@ server <- function(input, output, session) {
         downloadButton("download_trans_result", "下载翻译后的数据", class = "btn-success", style = "width: 100%;")
       })
       
+      write_sciwxzs_log(log_env)
+
       show_notification("翻译完成！", "message")
     }
   })
@@ -1663,12 +1716,16 @@ server <- function(input, output, session) {
   # ==================== 分词处理模块 ====================
   
   observeEvent(input$start_segment, {
+    # 每次点击即记录日志
+    log_feature_use(log_env, "segmentation")
+    write_sciwxzs_log(log_env)
+
     # 检查API密钥
     if (is.null(rv$api_key) || !rv$api_valid) {
       show_notification("请先在API配置页面设置有效的API密钥！", "error")
       return()
     }
-    
+
     # 优先使用翻译后的处理数据（translated_processed_data），如果没有则使用原始处理数据
     segment_data <- if (!is.null(rv$translated_processed_data) && nrow(rv$translated_processed_data) > 0) {
       # 检查是否有翻译后的中文摘要
@@ -1743,6 +1800,12 @@ server <- function(input, output, session) {
           timeout_sec = input$timeout
         )
         
+        # 记录 token 消耗
+        seg_usage <- result$usage
+        if (!is.null(seg_usage)) {
+          log_tokens(log_env, "segmentation", seg_usage$prompt_tokens, seg_usage$completion_tokens)
+        }
+
         results[[i]] <- result$words
         
         status <- if(result$success) "成功" else paste("失败:", result$error %||% "未知错误")
@@ -1815,6 +1878,8 @@ server <- function(input, output, session) {
                            choices = rv$word_freq$word,
                            selected = head(rv$word_freq$word, 5))
       
+      write_sciwxzs_log(log_env)
+
       rv$segment_log <- paste(rv$segment_log, "\n分词完成！")
       show_notification("分词处理完成！", "message")
       
@@ -1935,6 +2000,10 @@ server <- function(input, output, session) {
   
   # 更新词频统计数据并同步到其他模块
   observeEvent(input$refresh_freq, {
+    # 每次点击即记录日志
+    log_feature_use(log_env, "word_freq")
+    write_sciwxzs_log(log_env)
+
     data <- get_freq_data()
     req(data)
     
@@ -2031,6 +2100,8 @@ server <- function(input, output, session) {
                            choices = rv$word_freq$word,
                            selected = head(rv$word_freq$word, 5))
       
+      write_sciwxzs_log(log_env)
+
       show_notification("词频统计完成！数据已同步到其他分析模块", "success")
     })
   })
@@ -2367,6 +2438,12 @@ server <- function(input, output, session) {
     }
   )
   
+  # 记录时间趋势图使用频次
+  observeEvent(input$plot_trend, {
+    log_feature_use(log_env, "time_trend")
+    write_sciwxzs_log(log_env)
+  }, ignoreInit = TRUE)
+
   # ==================== 7. 热力图模块（优化版，使用词内年度占比归一化）====================
   
   output$heatmap_plot <- renderPlot({
@@ -2533,6 +2610,12 @@ server <- function(input, output, session) {
     }
   )
   
+  # 记录热力图使用频次
+  observeEvent(input$plot_heatmap, {
+    log_feature_use(log_env, "heatmap")
+    write_sciwxzs_log(log_env)
+  }, ignoreInit = TRUE)
+
   # ==================== 8. 气泡图模块 Server 逻辑（使用同步的数据）====================
   
   # 气泡图数据处理函数
@@ -2882,6 +2965,12 @@ server <- function(input, output, session) {
     }
   )
   
+  # 记录气泡图使用频次
+  observeEvent(input$plot_bubble, {
+    log_feature_use(log_env, "bubble_chart")
+    write_sciwxzs_log(log_env)
+  }, ignoreInit = TRUE)
+
   # ==================== 9. 词云图模块（使用同步的数据）====================
   
   output$wordcloud_plot <- renderWordcloud2({
@@ -3024,6 +3113,12 @@ server <- function(input, output, session) {
   ')
   })
   
+  # 记录词云图使用频次
+  observeEvent(input$generate_cloud, {
+    log_feature_use(log_env, "word_cloud")
+    write_sciwxzs_log(log_env)
+  }, ignoreInit = TRUE)
+
   # ==================== 10. 文献综述模块 ====================
   
   # 准备综述数据
@@ -3113,8 +3208,12 @@ server <- function(input, output, session) {
   
   # 生成综述的主函数
   observeEvent(input$generate_review, {
+    # 每次点击即记录日志
+    log_feature_use(log_env, "review")
+    write_sciwxzs_log(log_env)
+
     req(rv$review_data)
-    
+
     # 检查API密钥
     if (is.null(rv$api_key) || !rv$api_valid) {
       show_notification("请先在API配置页面设置有效的API密钥！", "error")
@@ -3226,8 +3325,14 @@ server <- function(input, output, session) {
         temperature = 0.7,
         timeout_sec = 120
       )
+
+      # 记录 token 消耗
+      review_usage <- attr(full_response, "usage")
+      if (!is.null(review_usage)) {
+        log_tokens(log_env, "review", review_usage$prompt_tokens, review_usage$completion_tokens)
+      }
     })
-    
+
     if (grepl("^失败", full_response)) {
       rv$review_progress_log <- paste(rv$review_progress_log, 
                                       sprintf("\u274c API 调用失败: %s\n", full_response))
@@ -3244,6 +3349,8 @@ server <- function(input, output, session) {
         rv$reference_list <- "无独立参考文献列表"
       }
       
+      write_sciwxzs_log(log_env)
+
       rv$review_progress_log <- paste(rv$review_progress_log, 
                                       sprintf("\u2705 综述生成成功！共处理 %d 篇文献。\n", nrow(review_data)))
       
